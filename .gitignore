@@ -1,0 +1,24 @@
+# 🔐 Secrets
+.env
+
+# 🐍 Python
+__pycache__/
+*.py[cod]
+
+# 📦 Virtual Environment
+venv/
+env/
+
+# 🗃️ Project files
+*.zip
+*.pdf
+*.mp3
+*.log
+
+# 🧠 IDE config
+.vscode/
+.idea/
+
+# 🧹 OS files
+.DS_Store
+Thumbs.db
