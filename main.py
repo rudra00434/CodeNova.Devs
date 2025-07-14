@@ -26,7 +26,7 @@ API_KEY = os.getenv("GROQ_API_KEY")
 st.set_page_config(page_title="💬 CodeNova Your coding buddy", layout="centered")
 
 # Theme
-mode = st.sidebar.radio("Choose Theme Mode", ("🌞 Light", "🌙 Dark"))
+mode = st.sidebar.radio("🎨 Choose Theme Mode", ("🌞 Light", "🌙 Dark"))
 if mode == "🌙 Dark":
     primary_color = "#00FFFF"
     background_color = "#0E1117"
@@ -35,6 +35,29 @@ else:
     primary_color = "#000000"
     background_color = "#FFFFFF"
     text_color = "black"
+
+st.markdown(f"""
+    <style>
+    body, .stApp {{
+        background-color: {background_color};
+        color: {text_color};
+    }}
+    .stTextInput > div > input,
+    .stTextArea > div > textarea,
+    .stSelectbox > div > div,
+    .stExpander, .stButton button,
+    .stDownloadButton button,
+    .stMarkdown, .stCode, .stJson,
+    .stTabs {{
+        background-color: {background_color};
+        color: {text_color};
+        border-color: {primary_color};
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        color: {text_color};
+    }}
+    </style>
+""", unsafe_allow_html=True)
 
 # Styling
 st.markdown(f"""
