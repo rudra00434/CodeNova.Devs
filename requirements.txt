@@ -1,0 +1,13 @@
+streamlit
+streamlit-lottie
+langchain
+langchain-core
+langchain-groq
+httpx
+requests
+python-dotenv
+speechrecognition
+fpdf
+gtts
+plotly
+numpy
