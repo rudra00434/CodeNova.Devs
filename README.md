@@ -48,26 +48,54 @@ CodeNova is a beautifully designed, real-time AI coding assistant built with Str
 </p>
 
 
-🚀 Key Features
-🎙️ Voice Input — Ask coding questions by speaking.
+🚀 Key Features — CodeNova (AI-Powered Developer Assistant)
+💬 Chat & Language Support
+🧠 Groq API-Powered LLMs — Choose from LLaMA3-8B, LLaMA3-70B, Mixtral, or Gemma models.
 
-💬 Multi-Turn Chat Memory — Tracks previous conversations for context.
+🌍 Multi-Language Support — Ask questions and generate code in Python, C++, Java, JavaScript, TypeScript, etc.
 
-🧠 Groq API-Powered LLMs — Switch between LLaMA3, Mixtral, and Gemma.
+💡 Multi-Turn Chat Memory — Keeps track of past questions for better context and continuity.
 
-🌐 Multi-language Code Output — Generate code in Python, Java, C++, and more.
+🔁 Voice Input & Output — Speak your query, and hear the AI's response (powered by SpeechRecognition & gTTS).
 
-🎨 Light/Dark Theme Toggle — Customize your experience.
+🧠 Developer SuperTools (Built-in)
+🧵 Two-Way Code Explanation Tool
 
-📥 Export Responses — Download answers as .txt or .pdf.
+Paste or upload code to get line-by-line explanations.
 
-📤 Upload PDF/Image/Code — Ask questions by uploading .pdf, .txt, .py, or image files.
+Describe functionality to generate complete code.
 
-🧽 Clear Chat — Reset your conversation history anytime.
+Generate unit tests or explain traceback errors.
 
-🗣️ Voice Response — Get spoken answers using text-to-speech.
+📈 Time Complexity Analyzer
 
-🔁 Smooth Transitions — Elegant UI with fade-in animation effects.
+Paste a function and get Big-O estimation with a growth curve visualization.
+
+🧪 API Testing Console
+Send real-time GET, POST, PUT, DELETE requests.
+
+Add auth tokens, custom headers, and JSON bodies.
+
+Save and load API profiles for fast testing.
+
+View cURL equivalents for easy CLI integration.
+
+📦 Utilities & Export Options
+🧾 PDF Export — Download responses or explanations as formatted PDF files.
+
+🧠 Session Saving — Saves your chat history to chat_memory.json locally.
+
+🔊 Voice Feedback — Get AI responses spoken aloud (great for accessibility).
+
+🎨 UI & Customization
+🌗 Light/Dark Theme Toggle
+
+🎞️ Lottie Animations & Custom Fonts
+
+📥 Drag & Drop File Uploads (for .py, .pdf, .txt, .cpp, etc.)
+
+🧽 Clear Chat Button — Reset session memory anytime.
+
 
 📦Codenova-chatbot file structure 
  ┣📜main.py
@@ -93,6 +121,15 @@ CodeNova is a beautifully designed, real-time AI coding assistant built with Str
                 SpeechRecognition
                   |
                  streamlit-lottie ai
+                  |
+                  httpx -(for api testing tool)
+                  |
+                  requests
+                  |
+                  plotly (from Time complexity graph)
+                  |
+                  numpy
+                 
 
 
 <h3 align="left">Groq API Setup:</h3>
