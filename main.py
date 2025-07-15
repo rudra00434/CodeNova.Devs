@@ -15,11 +15,13 @@ from gtts import gTTS
 import time
 import zipfile
 import io
+from io import BytesIO
 import httpx
 import numpy as np
 import math
 import plotly.graph_objects as go
 import re
+
 
 API_KEY = os.getenv("GROQ_API_KEY")
 
@@ -72,22 +74,78 @@ st.markdown(f"""
 # Lottie title
 lottie_ai = requests.get("https://assets2.lottiefiles.com/packages/lf20_j1adxtyb.json").json()
 st.markdown('<div class="big-title fade-in">💻 CodeNova your coding buddy</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtext fade-in">Your AI Coding Companion — Now with multi-language support!</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtext fade-in">Your AI Coding Companion — Now with Multi-language support</div>', unsafe_allow_html=True)
 st_lottie(lottie_ai, height=200, key="ai")
 
-# Model selection
+
+#Llm selection
+# Groq models dictionary (unchanged)
 groq_models = {
-    "LLaMA3 8B": "llama3-8b-8192",
-    "LLaMA3 70B": "llama3-70b-8192",
-    "Mixtral 8x7B": "mixtral-8x7b-32768",
-    "Gemma 7B IT": "gemma-7b-it"
+    "LLaMA 3-8B Instant": "llama-3.1-8b-instant",
+    "LLaMA 3-70B Versatile": "llama-3.3-70b-versatile",
+    "Command R+": "command-r-plus"
 }
-selected_model_name = st.selectbox("🧐 Choose Groq Model", list(groq_models.keys()), index=1)
+
+# Initialize session state
+if "selected_model_name" not in st.session_state:
+    st.session_state.selected_model_name = "LLaMA 3-70B Versatile"
+
+with st.expander("🧠 Choose Your LLM Model", expanded=True):
+    # ✨ Custom CSS with animation
+    st.markdown("""
+        <style>
+        .model-button {
+            display: inline-block;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 16px;
+            margin: 6px;
+            border: 2px solid #00BFFF;
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.4s ease, color 0.4s ease, transform 0.2s ease;
+        }
+        .model-button:hover {
+            transform: scale(1.05);
+        }
+        .active {
+            background-color: #00BFFF;
+            color: white;
+        }
+        .inactive {
+            background-color: transparent;
+            color: #00BFFF;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Create buttons in a responsive layout
+    cols = st.columns(len(groq_models))
+    for i, (model_name, _) in enumerate(groq_models.items()):
+        with cols[i]:
+            is_active = model_name == st.session_state.selected_model_name
+            css_class = "model-button active" if is_active else "model-button inactive"
+            button_html = f'<div class="{css_class}">{model_name}</div>'
+            clicked = st.button(model_name, key=f"btn_{model_name}")
+            st.markdown(button_html, unsafe_allow_html=True)
+            if clicked:
+                st.session_state.selected_model_name = model_name
+
+# Get selected model ID
+selected_model_name = st.session_state.selected_model_name
 selected_model_id = groq_models[selected_model_name]
+
+# Optional confirmation display
+st.markdown(f"✅ **Selected Model:** `{selected_model_name}` (`{selected_model_id}`)")
+
 
 # LangChain
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You're a helpful coding assistant. Return only valid code, executable code and production ready code..."),
+    ("system",
+     "You're a highly skilled and reliable coding assistant. Your job is to return only clean, valid, executable, and production-ready code in response to the user's request. "
+     "The code should follow best practices for readability, error handling, and performance in the chosen language. "
+     "Do not include explanations, comments, or markdown formatting — return only the raw code. "
+     "If the user's question is unclear or incomplete, make reasonable assumptions or return a minimal working solution."),
     ("user", "Question: {question}")
 ])
 llm = ChatGroq(api_key=API_KEY, model_name=selected_model_id)
@@ -210,9 +268,29 @@ if st.button("🧹 Clear Chat History"):
     if os.path.exists("voice_response.mp3"):
         os.remove("voice_response.mp3")
     st.rerun()
+def styled_header(title, icon="🧪", color="#00BFFF"):
+    st.markdown(
+        f"""
+        <div style="
+            background-color: {color}20;
+            border: 1px solid {color};
+            padding: 10px 16px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            margin-top: 15px;
+            color: white;
+        ">
+            {icon} {title}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
 
 # 🔁 TWO-WAY CODE EXPLANATION TOOL
-with st.expander("🧠 Two-Way Code Explanation Tool", expanded=False):
+styled_header("Two-Way Code Explanation Tool", icon="🧠", color="#6366F1")
+with st.expander("Expand", expanded=False):
     tabs = st.tabs(["🧵 Explain Code", "🛠 Generate Code", "📦 Generate Test Cases", "❗ Explain Errors"])
     with tabs[0]:
         st.markdown("### 🧵 Paste your code or upload a file:")
@@ -225,8 +303,13 @@ with st.expander("🧠 Two-Way Code Explanation Tool", expanded=False):
         if st.button("🧠 Explain This Code"):
             with st.spinner("🔎 Analyzing code..."):
                 explain_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You're a helpful assistant. Explain this code line by line and then summarize."),
-                    ("user", "{code}")
+                    ("system",
+     "You're a helpful and experienced coding assistant. Carefully read the code provided by the user. "
+     "Explain it line by line in a clear and concise manner, using simple language where possible. "
+     "After the line-by-line explanation, provide a high-level summary describing what the code does overall. "
+     "If the code uses any advanced or uncommon syntax, explain it briefly when it appears. "
+     "Output only the explanation — do not reprint the code itself."),
+    ("user", "{code}")
                 ])
                 explain_chain = explain_prompt | llm | StrOutputParser()
                 explanation = explain_chain.invoke({"code": code_input})
@@ -236,8 +319,13 @@ with st.expander("🧠 Two-Way Code Explanation Tool", expanded=False):
         if st.button("🚀 Generate Code", key="two_way_code_gen"):
             with st.spinner("⚙️ Generating code..."):
                 gen_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You're a helpful AI. Write clean, functional code as per the user's description."),
-                    ("user", "{desc}")
+                    ("system", 
+     "You're a helpful and professional AI software engineer. Write clean, efficient, and production-quality code based on the user's description. "
+     "Automatically choose the most appropriate programming language if not specified. "
+     "Ensure the code is functional, idiomatic, and follows best practices for that language. "
+     "If the task is ambiguous, make reasonable assumptions and add comments to clarify. "
+     "Only output the code — no explanations, no markdown formatting."),
+    ("user", "{desc}")
                 ])
                 gen_chain = gen_prompt | llm | StrOutputParser()
                 code_output = gen_chain.invoke({"desc": desc_input})
@@ -245,10 +333,14 @@ with st.expander("🧠 Two-Way Code Explanation Tool", expanded=False):
     with tabs[2]:
         test_func = st.text_area("🧪 Paste your function here to generate tests:", height=180, key="test_input")
         if st.button("📦 Generate Test Cases"):
-            with st.spinner("🧠 Writing tests..."):
+            with st.spinner("🧠 Writing tests for your function..."):
                 test_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You're a test writer. Generate unit tests for this function using Python unittest."),
-                    ("user", "{func}")
+                    ("system",
+     "You're a professional test engineer. Generate comprehensive and well-structured unit tests for the given function. "
+     "Automatically detect the programming language and use the most appropriate testing framework (e.g., unittest or pytest for Python, Jest for JavaScript, JUnit for Java, Catch2 for C++, etc.). "
+     "Cover valid cases, edge cases, invalid inputs, and exception handling. Mock external dependencies if necessary. "
+     "Follow naming and structural best practices for the selected framework. Output only the complete test code without explanation or markdown."),
+    ("user", "{func}")
                 ])
                 test_chain = test_prompt | llm | StrOutputParser()
                 test_code = test_chain.invoke({"func": test_func})
@@ -258,8 +350,12 @@ with st.expander("🧠 Two-Way Code Explanation Tool", expanded=False):
         if st.button("🔍 Explain Error"):
             with st.spinner("🛠️ Diagnosing error..."):
                 error_prompt = ChatPromptTemplate.from_messages([
-                    ("system", "You're a debugger. Explain this error clearly and suggest how to fix it."),
-                    ("user", "{traceback}")
+                    ("system",
+     "You're a highly skilled debugging assistant. Analyze the following error message or traceback. "
+     "Clearly explain what the error means in simple terms, identify the likely cause, and suggest specific steps to fix it. "
+     "If the error includes a file and line number, use it to narrow down the issue. "
+     "Provide only the explanation and solution — do not repeat the error message."),
+    ("user", "{traceback}")
                 ])
                 error_chain = error_prompt | llm | StrOutputParser()
                 error_explanation = error_chain.invoke({"traceback": traceback_input})
@@ -324,9 +420,9 @@ def plot_complexity_curve(big_o: str):
 
             
 # 🧠 TIME COMPLEXITY ANALYZER SECTION
-with st.expander("📈 Time Complexity Analyzer (AI-Powered)"):
+styled_header("Time Complexity Analyzer (AI-Powered)", icon="📏", color="#FF5733")
+with st.expander("Expand",expanded=False):
     code_input = st.text_area("🔍 Paste your function code here:")
-
     if st.button("🧠 Analyze with GPT", key="analyze_complexity"):
         if code_input.strip():
             with st.spinner("Asking GPT to estimate time complexity..."):
@@ -346,7 +442,8 @@ with st.expander("📈 Time Complexity Analyzer (AI-Powered)"):
             
             
 # API TESTING TOOL
-with st.expander("🧪 API Testing Tool (Advanced)", expanded=False):
+styled_header("API Testing Tool (Advanced)", icon="🧪", color="#21C55D")
+with st.expander("Expand",expanded=False):
     col1, col2 = st.columns([2, 1])
     with col1:
         st.session_state["api_url"] = st.text_input("🔗 Enter API URL", value=st.session_state.get("api_url", ""))
@@ -387,26 +484,100 @@ with st.expander("🧪 API Testing Tool (Advanced)", expanded=False):
             st.code(curl_cmd, language="bash")
         except Exception as e:
             st.error(f"❌ Request failed: {str(e)}")
-# UNIT TESTING TOOL
-with st.expander("🧪 Unit Testing Generator", expanded=False):
-    st.markdown("### 🧪 Paste a function to generate unit tests:")
-    unit_input = st.text_area("Function Code", height=200, key="unit_code_input")
-    if st.button("🧪 Generate Unit Tests"):
-        with st.spinner("🧠 Writing unit tests using unittest framework..."):
-            unit_prompt = ChatPromptTemplate.from_messages([
-                ("system", 
- "You are a professional Python test engineer. Given a function, generate comprehensive unit tests using the `unittest` framework. "
- "Make sure to include:\n"
- "- A test class with descriptive docstrings\n"
- "- At least 3-4 meaningful test cases, including edge cases\n"
- "- Clear and correct usage of `assert` methods like `assertEqual`, `assertRaises`, etc.\n"
- "- Avoid hardcoding unrelated values; reflect the logic of the function exactly.\n"
- "If needed, mock external dependencies using `unittest.mock`."
-),
-("user", "{func}")
+            
 
+#Unit Testing Generator
+styled_header("Unit Testing Generator", icon="📄", color="#F59E0B")
+with st.expander("Expand",expanded=False):
+    st.markdown("### 🧪 Paste a function/component to generate unit tests:")
+
+    # Language/Framework Selector
+    language = st.selectbox(
+        "🔤 Choose the language or framework:",
+        ["Python", "Java", "JavaScript", "C++", "Go", "Rust", "C#", "React", "Next.js", "Node.js"],
+        key="unit_test_lang"
+    )
+
+    unit_input = st.text_area("🧩 Function/Component Code:", height=200, key="unit_code_input")
+
+    # Extension mapping
+    file_extensions = {
+        "Python": "py", "Java": "java", "JavaScript": "js", "C++": "cpp", "Go": "go",
+        "Rust": "rs", "C#": "cs", "React": "jsx", "Next.js": "js", "Node.js": "js"
+    }
+
+    lang_prompts = {
+        "Python": (
+                    "You're a Python test engineer. Generate unit tests using the unittest framework for the provided function."
+                ),
+                "Java": (
+                    "You're a Java developer. Generate JUnit 5 test cases with descriptive test methods."
+                ),
+                "JavaScript": (
+                    "You're a JavaScript developer. Use the Jest framework to write unit tests for the provided function."
+                ),
+                "C++": (
+                    "You're a C++ developer. Generate Google Test (gtest) unit tests for the provided function."
+                ),
+                "Go": (
+                    "You're a Go developer. Generate Go unit tests using Go's testing package (`testing`).\n"
+                    "- Use `t.Run` and proper table-driven tests."
+                ),
+                "Rust": (
+                    "You're a Rust developer. Generate Rust unit tests using `#[cfg(test)]` and `#[test]`.\n"
+                    "- Cover typical and edge cases."
+                ),
+                "C#": (
+                    "You're a C# developer. Generate unit tests using NUnit or MSTest for the provided method."
+                ),
+                "React": (
+                    "You're a frontend developer. Given a React component, generate unit tests using `React Testing Library` and `Jest`.\n"
+                    "- Test rendering, props, events, and effects."
+                ),
+                "Next.js": (
+                    "You're a Next.js developer. Generate tests using Jest + React Testing Library for components and API routes.\n"
+                    "- If it's an API route, test responses using `supertest` or similar."
+                ),
+                "Node.js": (
+                    "You're a Node.js backend developer. Generate unit tests using `Mocha` and `Chai` or `Jest`.\n"
+                    "- Use `describe`, `it`, and assertions like `expect`, `should`, or `assert`."
+                )
+            }
+
+            
+    lang_map = {
+        "Python": "python", "Java": "java", "JavaScript": "javascript", "C++": "cpp",
+        "Go": "go", "Rust": "rust", "C#": "csharp", "React": "javascript",
+        "Next.js": "javascript", "Node.js": "javascript"
+    }
+
+    if st.button("🧪 Generate Unit Tests") and unit_input.strip():
+        with st.spinner("🧠 Generating unit tests..."):
+
+            unit_prompt = ChatPromptTemplate.from_messages([
+                ("system", lang_prompts[language]),
+                ("user", "{func}")
             ])
             unit_chain = unit_prompt | llm | StrOutputParser()
             unit_output = unit_chain.invoke({"func": unit_input})
-            st.code(unit_output, language="python")
 
+            st.markdown("### ✅ Generated Unit Test:")
+            st.code(unit_output, language=lang_map[language])
+
+            # ------------------------------
+            # Export Logic: Downloadable file
+            # ------------------------------
+            file_name = f"unit_test.{file_extensions[language]}"
+            file_content = unit_output.encode("utf-8")
+            file_buffer = BytesIO(file_content)
+
+            # 📁 Download section
+            with st.container():
+                st.markdown("#### ⬇️ Export Test File:")
+                st.download_button(
+                    label="📤 Download Test File",
+                    data=file_buffer,
+                    file_name=file_name,
+                    mime="text/plain",
+                    use_container_width=True
+                )
