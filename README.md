@@ -1,6 +1,6 @@
 # CodeNova.Devs
 # CodeNova-Gen_AI_Project
-CodeNova is a Streamlit-based chatbot powered by LangChain + Groq API that helps you generate multi-language code instantly using LLMs like Gemma:7b, LLaMA 3, and Mistral. Now supercharged with voice input, voice assistant, chat history, dark/light mode, and PDF/TXT exports. It can make your development smoother by giving🌐Multi-language Code Output
+CodeNova is a Streamlit-based chatbot powered by LangChain + Groq API that helps you generate multi-language code instantly using LLMs like Gemma:7b, LLaMA 3, and Mistral. Now supercharged with voice input, voice assistant, chat history, dark/light mode, and PDF/TXT exports , REST API testing Postman architecture , REST API monitoring , UNIT testing , Time complexity Analyzer etc multiple features .It can make your development smoother by giving🌐Multi-language Code Output
 🔮 CodeNova - Your Real-Time AI Coding Buddy with real time feedback generator
 CodeNova is a beautifully designed, real-time AI coding assistant built with Streamlit, LangChain, and Groq API. It supports multi-language code generation (Python, Java, C++, etc.) and provides interactive features for an enhanced developer experience.
 <h1 align="center">Hi 👋, I'm Rudranil Goswami</h1>
