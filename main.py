@@ -253,7 +253,7 @@ if st.button("📝 Export as PDF"):
         lines = st.session_state.history[-1][1].split('\n')
         for line in lines:
             pdf.multi_cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'))
-        pdf_file = f"response_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+        pdf_file = f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         pdf.output(pdf_file)
         with open(pdf_file, "rb") as f:
             st.download_button("Download .pdf", f, file_name=pdf_file, mime="application/pdf")
