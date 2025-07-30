@@ -163,3 +163,28 @@ pip install -r requirements.txt
 streamlit run main.py
 ```
 # App Visuals 
+
+<img width="1920" height="883" alt="Screenshot (153)" src="https://github.com/user-attachments/assets/7c6c1b85-ec97-4f8c-8ea2-f07a4a25fdb5" />
+
+
+<img width="1920" height="887" alt="Screenshot (154)" src="https://github.com/user-attachments/assets/be6320f4-c043-4b99-9b20-2255ac8a3f28" />
+
+
+<img width="1920" height="890" alt="Screenshot (155)" src="https://github.com/user-attachments/assets/cc740355-d00f-493f-8507-a66d6261b051" />
+
+
+<img width="1920" height="874" alt="Screenshot (159)" src="https://github.com/user-attachments/assets/60713f7f-1dd6-4613-a215-61db70655f06" />
+
+
+<img width="1920" height="896" alt="Screenshot (158)" src="https://github.com/user-attachments/assets/880fb148-ed60-40cf-8795-00c1ce394018" />
+
+
+<img width="1920" height="825" alt="Screenshot (157)" src="https://github.com/user-attachments/assets/1cad6ebd-b74b-44b8-9ca9-a8cf76d1072e" />
+
+
+
+
+
+
+
+ 
