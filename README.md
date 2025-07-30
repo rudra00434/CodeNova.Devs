@@ -161,5 +161,5 @@ pip install -r requirements.txt
 
 # Start the app
 streamlit run main.py
-
-<h1> App Visuals <h1>
+```
+# App Visuals 
