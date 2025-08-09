@@ -80,7 +80,7 @@ Save and load API profiles for fast testing.
 
 View cURL equivalents for easy CLI integration.
 
- ## _____REST API MONITORING ____
+ ## _____REST API MONITORING Tool____
 you can check you your API is healthy or not by giving input your API endpoint
 it will show you the api time table (updated feature) of CodeNova
 
@@ -90,6 +90,7 @@ it will show you the api time table (updated feature) of CodeNova
 ## 🧠 Session Saving — Saves your chat history to chat_memory.json locally.
 
 ## 🔊 Voice Feedback — Get AI responses spoken aloud (great for accessibility).
+# Regex Generator Tool
 
 🎨 UI & Customization
 🌗 Light/Dark Theme Toggle
