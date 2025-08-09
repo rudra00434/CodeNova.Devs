@@ -48,18 +48,18 @@ CodeNova is a beautifully designed, real-time AI coding assistant built with Str
 </p>
 
 
-🚀 Key Features — CodeNova (AI-Powered Developer Assistant)
-💬 Chat & Language Support
+# 🚀 Key Features — CodeNova (AI-Powered Developer Assistant)
+## 💬 Chat & Language Support
 🧠 Groq API-Powered LLMs — Choose from LLaMA3-8B, LLaMA3-70B, Mixtral, or Gemma models.
 
-🌍 Multi-Language Support — Ask questions and generate code in Python, C++, Java, JavaScript, TypeScript, etc.
+## 🌍 Multi-Language Support — Ask questions and generate code in Python, C++, Java, JavaScript, TypeScript, etc.
 
-💡 Multi-Turn Chat Memory — Keeps track of past questions for better context and continuity.
+## 💡 Multi-Turn Chat Memory — Keeps track of past questions for better context and continuity.
 
-🔁 Voice Input & Output — Speak your query, and hear the AI's response (powered by SpeechRecognition & gTTS).
+## 🔁 Voice Input & Output — Speak your query, and hear the AI's response (powered by SpeechRecognition & gTTS).
 
-🧠 Developer SuperTools (Built-in)
-🧵 Two-Way Code Explanation Tool
+# 🧠 Developer SuperTools (Built-in)
+## 🧵 Two-Way Code Explanation Tool
 
 Paste or upload code to get line-by-line explanations.
 
@@ -67,11 +67,11 @@ Describe functionality to generate complete code.
 
 Generate unit tests or explain traceback errors.
 
-📈 Time Complexity Analyzer
+## 📈 Time Complexity Analyzer
 
 Paste a function and get Big-O estimation with a growth curve visualization.
 
-🧪 API Testing Console
+## 🧪 API Testing Console
 Send real-time GET, POST, PUT, DELETE requests.
 
 Add auth tokens, custom headers, and JSON bodies.
@@ -80,16 +80,16 @@ Save and load API profiles for fast testing.
 
 View cURL equivalents for easy CLI integration.
 
- _____REST API MONITORING ____
+ ## _____REST API MONITORING ____
 you can check you your API is healthy or not by giving input your API endpoint
 it will show you the api time table (updated feature) of CodeNova
 
-📦 Utilities & Export Options
-🧾 PDF Export — Download responses or explanations as formatted PDF files.
+## 📦 Utilities & Export Options
+## 🧾 PDF Export — Download responses or explanations as formatted PDF files.
 
-🧠 Session Saving — Saves your chat history to chat_memory.json locally.
+## 🧠 Session Saving — Saves your chat history to chat_memory.json locally.
 
-🔊 Voice Feedback — Get AI responses spoken aloud (great for accessibility).
+## 🔊 Voice Feedback — Get AI responses spoken aloud (great for accessibility).
 
 🎨 UI & Customization
 🌗 Light/Dark Theme Toggle
