@@ -182,6 +182,8 @@ streamlit run main.py
 <img width="1920" height="825" alt="Screenshot (157)" src="https://github.com/user-attachments/assets/1cad6ebd-b74b-44b8-9ca9-a8cf76d1072e" />
 
 
+<img width="900" height="890" alt="Screenshot (222)" src="https://github.com/user-attachments/assets/031168e2-fd1f-4363-96e8-62cd44d58ef0" />
+
 
 
 
