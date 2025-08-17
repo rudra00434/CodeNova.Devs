@@ -736,3 +736,117 @@ with st.expander("Expand",expanded=False):
                     mime="text/plain",
                     use_container_width=True
                 )
+                
+client_api = ChatGroq(api_key=API_KEY, model_name="llama-3.3-70b-versatile")
+# Regex Generator and Tester
+styled_header("Regex Generator and Tester", icon="🧩", color="#9CFF33")
+
+with st.expander("Expand", expanded=False):
+    regex_description = st.text_area(
+        "Describe the pattern you want to match:",
+        placeholder="Example: match an email address"
+    )
+    sample_text = st.text_area(
+        "Sample text to test (optional):",
+        placeholder="Paste some text here to test your regex"
+    )
+
+    def _clean_pattern(text: str) -> str:
+        txt = text.strip()
+        if txt.startswith("```"):
+            parts = txt.split("```")
+            if len(parts) >= 3:
+                txt = parts[1].strip()
+            else:
+                txt = txt.replace("```", "").strip()
+        if (txt.startswith("/") and txt.endswith("/")) or (txt.startswith("r/") and txt.endswith("/")):
+            txt = txt[1:-1].strip()
+        if (txt.startswith("'") and txt.endswith("'")) or (txt.startswith('"') and txt.endswith('"')):
+            txt = txt[1:-1].strip()
+        if txt.startswith("r'") and txt.endswith("'"):
+            txt = txt[2:-1].strip()
+        if txt.startswith('r"') and txt.endswith('"'):
+            txt = txt[2:-1].strip()
+        if txt.lower().startswith("python"):
+            txt = txt[len("python"):].strip()
+        return txt.strip("` ;")
+
+    # ------------------ Generate Regex ------------------
+    if st.button("🧠 Generate Regex"):
+        if not regex_description.strip():
+            st.warning("Please enter a description for the regex.")
+        else:
+            try:
+                regex_prompt = (
+                    "Return ONLY a Python regular-expression pattern for this requirement, "
+                    "with no description, no code fences, and no delimiters:\n"
+                    f"{regex_description}"
+                )
+                resp = client_api.invoke(regex_prompt)          
+                generated_regex = _clean_pattern(resp.content) 
+
+                if not generated_regex:
+                    st.error("Model returned an empty pattern. Try rephrasing the description.")
+                else:
+                    # save regex in session state
+                    st.session_state["generated_regex"] = generated_regex
+
+                    st.subheader("Generated Regex Pattern")
+                    st.code(generated_regex, language="regex")
+
+                    st.markdown(
+                        f"""
+                        <button onclick="navigator.clipboard.writeText('{generated_regex.replace("'", "\\'")}')"
+                                style="background-color:#4CAF50;color:white;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">
+                            📋 Copy Regex
+                        </button>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+                    explain_prompt = (
+                        "Explain briefly and clearly what this Python regex does. "
+                        "Do NOT repeat the pattern in code fences. Keep it under 6 lines.\n"
+                        f"Pattern: {generated_regex}"
+                    )
+                    exp_resp = client_api.invoke(explain_prompt)  
+                    explanation = exp_resp.content.strip()
+
+                    st.subheader("Regex Explanation")
+                    st.markdown(explanation)
+
+            except Exception as e:
+                st.error(f"Error generating regex or explanation: {e}")
+
+    # ------------------ Test Regex ------------------
+    if sample_text.strip() and "generated_regex" in st.session_state:
+        try:
+            pattern = re.compile(st.session_state["generated_regex"])
+            matches = pattern.findall(sample_text)
+
+            if not matches:
+                search_match = pattern.search(sample_text)
+                if search_match:
+                    matches = [search_match.group()]
+
+            if matches:
+                st.success(f"✅ Matches found: {matches}")
+            else:
+                st.warning("⚠ No matches found on the provided sample.")
+        except re.error as e:
+            st.error(f"Regex Error: {e}")
+        except Exception as e:
+            st.error(f"Unexpected Error: {e}")
+
+    # ------------------ Quick Examples ------------------
+    with st.popover("✨ Quick Examples"):
+        col1, col2, col3 = st.columns(3)
+        if col1.button("Email"):
+            st.session_state["regex_description"] = "match a standard email address"
+        if col2.button("Indian Mobile"):
+            st.session_state["regex_description"] = "match Indian mobile numbers with optional +91 and spaces or hyphens"
+        if col3.button("URL"):
+            st.session_state["regex_description"] = "match http or https URLs"
+
+        if "regex_description" in st.session_state and not regex_description:
+            st.experimental_rerun()
