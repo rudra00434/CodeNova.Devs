@@ -106,6 +106,9 @@ it will show you the api time table (updated feature) of CodeNova
  ┣📜requirements.txt
  ┣📜chat_memory.json
  ┗📂assets (optional: animations, icons, etc.)
+ # CodeNova Architecture 
+ <img width="1493" height="846" alt="Screenshot (244)" src="https://github.com/user-attachments/assets/675d6f6a-3809-4d84-884d-1dd85d46ebf2" />
+
 🔐 <h3 align="left">requirements.txt:</h3>
 
               streamlit
@@ -173,16 +176,6 @@ streamlit run main.py
 <img width="1920" height="890" alt="Screenshot (155)" src="https://github.com/user-attachments/assets/cc740355-d00f-493f-8507-a66d6261b051" />
 
 
-<img width="1920" height="874" alt="Screenshot (159)" src="https://github.com/user-attachments/assets/60713f7f-1dd6-4613-a215-61db70655f06" />
-
-
-<img width="1920" height="896" alt="Screenshot (158)" src="https://github.com/user-attachments/assets/880fb148-ed60-40cf-8795-00c1ce394018" />
-
-
-<img width="1920" height="825" alt="Screenshot (157)" src="https://github.com/user-attachments/assets/1cad6ebd-b74b-44b8-9ca9-a8cf76d1072e" />
-
-
-<img width="1920" height="871" alt="Screenshot (206)" src="https://github.com/user-attachments/assets/4c316339-28b9-424d-9bf3-82f39023ba88" />
 
 
 
