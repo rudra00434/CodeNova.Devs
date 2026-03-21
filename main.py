@@ -1,852 +1,1912 @@
-import streamlit as st
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
-from streamlit_lottie import st_lottie
-import requests
-from datetime import datetime
-import speech_recognition as sr
-from fpdf import FPDF
+"""
+CodeNova — main.py
+AI-powered developer suite.  Run with: streamlit run main.py
+Requires: utils.py  |  .env with GROQ_API_KEY=...
+"""
+
+# ── stdlib ────────────────────────────────────────────────────────────────────
 import json
 import os
-from dotenv import load_dotenv
-load_dotenv()
-from gtts import gTTS
-import time
-import zipfile
-import io
-from io import BytesIO
-import httpx
-import numpy as np
-import math
-import plotly.graph_objects as go
 import re
+import time
+import uuid
+from datetime import datetime
+from io import BytesIO
 
+# ── third-party ───────────────────────────────────────────────────────────────
+import streamlit as st
+import httpx
 
-API_KEY = os.getenv("GROQ_API_KEY")
+# ── local ─────────────────────────────────────────────────────────────────────
+import utils
 
-st.set_page_config(page_title="💬 CodeNova Your coding buddy", layout="centered")
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG  (must be the very first Streamlit call)
+# ═════════════════════════════════════════════════════════════════════════════
+st.set_page_config(
+    page_title="CodeNova — AI Dev Suite",
+    page_icon="🚀",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Theme
-mode = st.sidebar.radio("🎨 Choose Theme Mode", ("🌞 Light", "🌙 Dark"))
-if mode == "🌙 Dark":
-    primary_color = "#00FFFF"
-    background_color = "#0E1117"
-    text_color = "white"
-else:
-    primary_color = "#000000"
-    background_color = "#FFFFFF"
-    text_color = "black"
+# ═════════════════════════════════════════════════════════════════════════════
+# GLOBAL CSS  — terminal-glass aesthetic
+# ═════════════════════════════════════════════════════════════════════════════
+import streamlit.components.v1 as _components
 
-st.markdown(f"""
-    <style>
-    body, .stApp {{
-        background-color: {background_color};
-        color: {text_color};
-    }}
-    .stTextInput > div > input,
-    .stTextArea > div > textarea,
-    .stSelectbox > div > div,
-    .stExpander, .stButton button,
-    .stDownloadButton button,
-    .stMarkdown, .stCode, .stJson,
-    .stTabs {{
-        background-color: {background_color};
-        color: {text_color};
-        border-color: {primary_color};
-    }}
-    .stTabs [data-baseweb="tab"] {{
-        color: {text_color};
-    }}
-    </style>
-""", unsafe_allow_html=True)
+_FONT = "https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;600;800&display=swap"
+_components.html(f'<link href="{_FONT}" rel="stylesheet">', height=0)
 
-# Styling
-st.markdown(f"""
-    <style>
-    body {{ background-color: {background_color}; color: {text_color}; }}
-    .stApp {{ background-color: {background_color}; }}
-    .big-title {{ font-size: 40px; font-weight: bold; color: {primary_color}; text-align: center; margin-bottom: 10px; }}
-    .subtext {{ text-align: center; font-size: 16px; color: #AAAAAA; margin-bottom: 30px; }}
-    </style>
-""", unsafe_allow_html=True)
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800;900&display=swap');
 
-# Lottie title
-lottie_ai = requests.get("https://assets2.lottiefiles.com/packages/lf20_j1adxtyb.json").json()
-st.markdown('<div class="big-title fade-in">💻 CodeNova your coding buddy</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtext fade-in">Your AI Coding Companion — Now with Multi-language support</div>', unsafe_allow_html=True)
-st_lottie(lottie_ai, height=200, key="ai")
-
-
-#Llm selection
-# Groq models dictionary (unchanged)
-groq_models = {
-    "LLaMA 3-8B Instant": "llama-3.1-8b-instant",
-    "LLaMA 3-70B Versatile": "llama-3.3-70b-versatile",
-    "Command R+": "command-r-plus"
+/* ── RESET ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, [class*="css"] {
+    font-family: 'Syne', sans-serif !important;
+    color: #e2e8f0 !important;
 }
 
-# Initialize session state
-if "selected_model_name" not in st.session_state:
-    st.session_state.selected_model_name = "LLaMA 3-70B Versatile"
+/* ── ANIMATED MESH BACKGROUND ──────────────────────────── */
+.stApp {
+    background-color: #05060f !important;
+    background-image:
+        radial-gradient(ellipse 80% 50% at 20% -10%, rgba(0,212,255,.13) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 40% at 80% 110%, rgba(124,58,237,.15) 0%, transparent 60%),
+        radial-gradient(ellipse 50% 30% at 50% 50%, rgba(16,185,129,.05) 0%, transparent 70%);
+}
+.main .block-container {
+    padding-top: 1.6rem; padding-bottom: 3rem;
+    max-width: 1140px;
+}
 
-with st.expander("🧠 Choose Your LLM Model", expanded=True):
-    # ✨ Custom CSS with animation
-    st.markdown("""
-        <style>
-        .model-button {
-            display: inline-block;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 16px;
-            margin: 6px;
-            border: 2px solid #00BFFF;
-            text-align: center;
-            cursor: pointer;
-            transition: background-color 0.4s ease, color 0.4s ease, transform 0.2s ease;
-        }
-        .model-button:hover {
-            transform: scale(1.05);
-        }
-        .active {
-            background-color: #00BFFF;
-            color: white;
-        }
-        .inactive {
-            background-color: transparent;
-            color: #00BFFF;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+/* ── SCROLLBAR ──────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #00d4ff, #7c3aed);
+    border-radius: 99px;
+}
 
-    # Create buttons in a responsive layout
-    cols = st.columns(len(groq_models))
-    for i, (model_name, _) in enumerate(groq_models.items()):
-        with cols[i]:
-            is_active = model_name == st.session_state.selected_model_name
-            css_class = "model-button active" if is_active else "model-button inactive"
-            button_html = f'<div class="{css_class}">{model_name}</div>'
-            clicked = st.button(model_name, key=f"btn_{model_name}")
-            st.markdown(button_html, unsafe_allow_html=True)
-            if clicked:
-                st.session_state.selected_model_name = model_name
+/* ── SIDEBAR ────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(170deg, #07091a 0%, #0b0e20 60%, #08091a 100%) !important;
+    border-right: 1px solid rgba(0,212,255,.12) !important;
+    box-shadow: 4px 0 30px rgba(0,0,0,.6) !important;
+}
+[data-testid="stSidebar"] * { color: #94a3b8 !important; }
+[data-testid="stSidebar"] .stButton button {
+    background: rgba(255,255,255,.04) !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    border-radius: 10px !important;
+    color: #64748b !important;
+    font-size: 0.79rem !important;
+    font-family: 'Space Mono', monospace !important;
+    transition: all .2s ease !important;
+    text-align: left !important;
+}
+[data-testid="stSidebar"] .stButton button:hover {
+    background: rgba(0,212,255,.08) !important;
+    border-color: rgba(0,212,255,.3) !important;
+    color: #00d4ff !important;
+    transform: translateX(3px) !important;
+}
 
-# Get selected model ID
-selected_model_name = st.session_state.selected_model_name
-selected_model_id = groq_models[selected_model_name]
+/* ── KEYFRAMES ──────────────────────────────────────────── */
+@keyframes gradShift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+    from { opacity: 0; } to { opacity: 1; }
+}
+@keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 20px rgba(0,212,255,.2), 0 0 40px rgba(124,58,237,.1); }
+    50%       { box-shadow: 0 0 35px rgba(0,212,255,.4), 0 0 60px rgba(124,58,237,.2); }
+}
+@keyframes scanline {
+    0%   { transform: translateY(-100%); }
+    100% { transform: translateY(100vh); }
+}
+@keyframes borderGlow {
+    0%, 100% { border-color: rgba(0,212,255,.2); }
+    50%       { border-color: rgba(0,212,255,.5); }
+}
+@keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50%       { transform: translateY(-6px); }
+}
 
-# Optional confirmation display
-st.markdown(f"✅ **Selected Model:** `{selected_model_name}` (`{selected_model_id}`)")
+/* ── HERO TITLE ─────────────────────────────────────────── */
+.nova-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 900;
+    font-size: 3.2rem;
+    background: linear-gradient(270deg, #00d4ff, #a855f7, #10b981, #f59e0b, #ef4444, #00d4ff);
+    background-size: 600% 600%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: gradShift 4s ease infinite, fadeUp .5s ease both;
+    text-align: center;
+    letter-spacing: -2px;
+    line-height: 1;
+    margin-bottom: 2px;
+    filter: drop-shadow(0 0 30px rgba(0,212,255,.3));
+}
+.nova-sub {
+    text-align: center;
+    color: #334155 !important;
+    font-size: 0.78rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    margin-top: 8px;
+    animation: fadeUp .7s .1s ease both;
+    font-family: 'Space Mono', monospace !important;
+}
 
+/* ── PAGE BANNER (per-page vibrant headers) ─────────────── */
+.page-banner {
+    position: relative;
+    border-radius: 18px;
+    padding: 24px 28px;
+    margin-bottom: 24px;
+    overflow: hidden;
+    animation: fadeUp .4s ease both;
+}
+.page-banner::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: linear-gradient(135deg, var(--banner-a) 0%, var(--banner-b) 100%);
+    opacity: .12;
+}
+.page-banner::after {
+    content: '';
+    position: absolute;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: radial-gradient(ellipse at 30% 30%, var(--banner-a) 0%, transparent 50%);
+    opacity: .07;
+}
+.page-banner-border {
+    position: absolute; inset: 0;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,.1);
+    background: transparent;
+}
+.page-banner-content { position: relative; z-index: 1; }
+.page-banner-icon {
+    font-size: 2.2rem;
+    display: block;
+    margin-bottom: 6px;
+    animation: float 3s ease infinite;
+}
+.page-banner-title {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 1.7rem;
+    letter-spacing: -.5px;
+    background: linear-gradient(90deg, var(--banner-a), var(--banner-b));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    line-height: 1.1;
+}
+.page-banner-desc {
+    font-size: .82rem;
+    color: #64748b;
+    margin-top: 4px;
+    font-family: 'Space Mono', monospace;
+}
 
-# LangChain
-prompt = ChatPromptTemplate.from_messages([
-    ("system",
-     "You're a highly skilled and reliable coding assistant. Your job is to return only clean, valid, executable, and production-ready code in response to the user's request. "
-     "The code should follow best practices for readability, error handling, and performance in the chosen language. "
-     "Do not include explanations, comments, or markdown formatting — return only the raw code. "
-     "If the user's question is unclear or incomplete, make reasonable assumptions or return a minimal working solution."),
-    ("user", "Question: {question}")
-])
-llm = ChatGroq(api_key=API_KEY, model_name=selected_model_id)
-chain = prompt | llm | StrOutputParser()
+/* ── GLASS CARDS ────────────────────────────────────────── */
+.glass {
+    background: linear-gradient(135deg, rgba(0,212,255,.04) 0%, rgba(124,58,237,.04) 100%);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(0,212,255,.12);
+    border-radius: 16px;
+    padding: 18px 22px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05);
+    transition: all .25s ease;
+}
+.glass:hover {
+    border-color: rgba(0,212,255,.28);
+    box-shadow: 0 8px 32px rgba(0,0,0,.5), 0 0 20px rgba(0,212,255,.08);
+    transform: translateY(-2px);
+}
 
-# History
-if "history" not in st.session_state:
-    st.session_state.history = []
-if os.path.exists("chat_memory.json"):
-    try:
-        with open("chat_memory.json", "r") as f:
-            st.session_state.history = json.load(f)
-    except json.JSONDecodeError:
-        st.session_state.history = []
+/* ── SECTION HEADERS ────────────────────────────────────── */
+.sec-header {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.26em;
+    text-transform: uppercase;
+    padding: 6px 16px 6px 12px;
+    border-radius: 6px;
+    margin-bottom: 14px;
+    margin-top: 22px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+}
+.sec-header::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+    border-radius: 99px;
+    background: currentColor;
+}
 
-# Sidebar Save/Load API Calls
-api_profile_file = "saved_api_calls.json"
-if "saved_api_calls" not in st.session_state:
-    if os.path.exists(api_profile_file):
-        try:
-            with open(api_profile_file, "r") as f:
-                st.session_state.saved_api_calls = json.load(f)
-        except json.JSONDecodeError:
-            st.session_state.saved_api_calls = {}
-    else:
-        st.session_state.saved_api_calls = {}
-profile_names = list(st.session_state.saved_api_calls.keys())
-selected_profile = st.sidebar.selectbox("📂 Load Saved Profile", options=[""] + profile_names)
-if selected_profile and selected_profile in st.session_state.saved_api_calls:
-    saved = st.session_state.saved_api_calls[selected_profile]
-    st.session_state["api_url"] = saved["url"]
-    st.session_state["method"] = saved["method"]
-    st.session_state["auth_token"] = saved.get("token", "")
-    st.session_state["headers_input"] = json.dumps(saved.get("headers", {}), indent=2)
-    st.session_state["body_input"] = json.dumps(saved.get("body", {}), indent=2)
-new_profile_name = st.sidebar.text_input("💾 New Profile Name")
-if st.sidebar.button("✅ Save Current API Request"):
-    if new_profile_name:
-        new_entry = {
-            "url": st.session_state.get("api_url", ""),
-            "method": st.session_state.get("method", "GET"),
-            "token": st.session_state.get("auth_token", ""),
-            "headers": json.loads(st.session_state.get("headers_input", "{}")),
-            "body": json.loads(st.session_state.get("body_input", "{}")) if st.session_state.get("method") != "GET" else {}
-        }
-        st.session_state.saved_api_calls[new_profile_name] = new_entry
-        with open(api_profile_file, "w") as f:
-            json.dump(st.session_state.saved_api_calls, f, indent=2)
-        st.sidebar.success(f"Saved as '{new_profile_name}' ✅")
-    else:
-        st.sidebar.warning("Enter a profile name to save.")
+/* ── METRIC CARDS ───────────────────────────────────────── */
+.metric-card {
+    background: linear-gradient(145deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.02) 100%);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 16px;
+    padding: 20px 14px;
+    text-align: center;
+    transition: all .25s ease;
+    box-shadow: 0 4px 20px rgba(0,0,0,.3);
+    position: relative;
+    overflow: hidden;
+}
+.metric-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.15), transparent);
+}
+.metric-card:hover {
+    border-color: rgba(0,212,255,.3);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 28px rgba(0,0,0,.4), 0 0 16px rgba(0,212,255,.1);
+}
+.metric-val {
+    font-size: 1.9rem;
+    font-weight: 900;
+    line-height: 1;
+    font-family: 'Space Mono', monospace;
+}
+.metric-label {
+    font-size: 0.68rem;
+    color: #334155;
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    margin-top: 6px;
+    font-family: 'Space Mono', monospace;
+}
 
-# Voice Input
-voice_text = ""
-if st.button("🎧 Speak Instead of typing"):
-    recognizer = sr.Recognizer()
-    with sr.Microphone() as source:
-        st.info("🎙️ CodeNova is Listening...")
-        audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
-    try:
-        voice_text = recognizer.recognize_google(audio)
-        st.success(f"You said: {voice_text}")
-    except sr.UnknownValueError:
-        st.warning("Could not understand the audio.")
-    except sr.RequestError as e:
-        st.error(f"Speech Recognition error: {e}")
+/* ── CHAT MESSAGES ──────────────────────────────────────── */
+[data-testid="stChatMessage"] {
+    background: linear-gradient(135deg,rgba(0,212,255,.03),rgba(124,58,237,.02)) !important;
+    border: 1px solid rgba(0,212,255,.09) !important;
+    border-radius: 16px !important;
+    margin-bottom: 12px !important;
+    box-shadow: 0 2px 16px rgba(0,0,0,.25) !important;
+    transition: border-color .2s !important;
+}
+[data-testid="stChatMessage"]:hover {
+    border-color: rgba(0,212,255,.2) !important;
+}
 
-# Input
-input_txt = st.text_input("💬 Ask your coding question:", value=voice_text if voice_text else "", key="user_input")
+/* ── INPUTS ─────────────────────────────────────────────── */
+.stTextInput input,
+.stTextArea textarea,
+.stSelectbox > div > div,
+.stNumberInput input {
+    background: rgba(13,17,23,.9) !important;
+    border: 1px solid rgba(255,255,255,.08) !important;
+    border-radius: 10px !important;
+    color: #e2e8f0 !important;
+    font-family: 'Space Mono', monospace !important;
+    font-size: 0.84rem !important;
+    transition: all .2s ease !important;
+}
+.stTextInput input:focus,
+.stTextArea textarea:focus,
+.stNumberInput input:focus {
+    border-color: #00d4ff !important;
+    box-shadow: 0 0 0 3px rgba(0,212,255,.1), 0 0 20px rgba(0,212,255,.08) !important;
+    background: rgba(0,212,255,.03) !important;
+}
 
-# Run Chain
-if st.button("🚀 Generate Code", key="main_code_gen") and input_txt:
-    with st.spinner("🤖 Generating response, please wait..."):
-        response = chain.invoke({"question": input_txt})
-        st.session_state.history.append((input_txt, response))
-        with open("chat_memory.json", "w") as f:
-            json.dump(st.session_state.history, f)
-        st.success("✅ Response generated!")
+/* ── BUTTONS ─────────────────────────────────────────────── */
+.stButton button {
+    background: rgba(255,255,255,.04) !important;
+    border: 1px solid rgba(255,255,255,.1) !important;
+    border-radius: 10px !important;
+    color: #94a3b8 !important;
+    font-family: 'Space Mono', monospace !important;
+    font-size: 0.78rem !important;
+    transition: all .2s ease !important;
+    letter-spacing: .04em !important;
+    position: relative !important;
+    overflow: hidden !important;
+}
+.stButton button:hover {
+    background: rgba(0,212,255,.09) !important;
+    border-color: rgba(0,212,255,.35) !important;
+    color: #00d4ff !important;
+    transform: translateY(-1px) !important;
+    box-shadow: 0 4px 20px rgba(0,212,255,.12) !important;
+}
+.stButton button[kind="primary"] {
+    background: linear-gradient(135deg, #00bcd4 0%, #7c3aed 100%) !important;
+    color: #fff !important;
+    border: none !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 20px rgba(0,188,212,.3), 0 0 40px rgba(124,58,237,.15) !important;
+    letter-spacing: .06em !important;
+}
+.stButton button[kind="primary"]:hover {
+    background: linear-gradient(135deg, #00d4ff 0%, #9333ea 100%) !important;
+    box-shadow: 0 6px 28px rgba(0,212,255,.4), 0 0 50px rgba(147,51,234,.2) !important;
+    transform: translateY(-2px) !important;
+    color: #fff !important;
+}
 
-        try:
-            tts = gTTS(text=response, lang='en')
-            voice_path = "voice_response.mp3"
-            tts.save(voice_path)
-            time.sleep(0.5)
-            with open(voice_path, "rb") as audio_file:
-                st.audio(audio_file.read(), format="audio/mp3")
-        except Exception as e:
-            st.warning(f"⚠️ Voice generation failed: {e}")
+/* ── DOWNLOAD BUTTON ────────────────────────────────────── */
+.stDownloadButton button {
+    background: rgba(16,185,129,.08) !important;
+    border: 1px solid rgba(16,185,129,.25) !important;
+    color: #34d399 !important;
+    border-radius: 10px !important;
+}
+.stDownloadButton button:hover {
+    background: rgba(16,185,129,.16) !important;
+    border-color: rgba(52,211,153,.5) !important;
+    box-shadow: 0 0 20px rgba(16,185,129,.2) !important;
+    color: #6ee7b7 !important;
+    transform: translateY(-1px) !important;
+}
 
-# Show History
-if st.session_state.history:
-    st.markdown("### 📜 Chat History")
-    for idx, (q, a) in enumerate(reversed(st.session_state.history), 1):
-        st.markdown(f"**Q{idx}:** {q}")
-        lang = "python"
-        st.code(a, language=lang)
+/* ── EXPANDERS ──────────────────────────────────────────── */
+.streamlit-expanderHeader {
+    background: rgba(255,255,255,.03) !important;
+    border-radius: 12px !important;
+    border: 1px solid rgba(255,255,255,.07) !important;
+    transition: all .2s ease !important;
+}
+.streamlit-expanderHeader:hover {
+    border-color: rgba(0,212,255,.25) !important;
+    background: rgba(0,212,255,.04) !important;
+    box-shadow: 0 0 16px rgba(0,212,255,.06) !important;
+}
+.streamlit-expanderContent {
+    border: 1px solid rgba(255,255,255,.05) !important;
+    border-top: none !important;
+    border-radius: 0 0 12px 12px !important;
+    background: rgba(255,255,255,.01) !important;
+}
 
-# Export PDF
-if st.button("📝 Export as PDF"):
-    try:
-        pdf = FPDF()
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        lines = st.session_state.history[-1][1].split('\n')
-        for line in lines:
-            pdf.multi_cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'))
-        pdf_file = f"response_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
-        pdf.output(pdf_file)
-        with open(pdf_file, "rb") as f:
-            st.download_button("Download .pdf", f, file_name=pdf_file, mime="application/pdf")
-    except Exception as e:
-        st.warning(f"⚠️ PDF export failed: {e}")
+/* ── TABS ───────────────────────────────────────────────── */
+.stTabs [data-baseweb="tab-list"] {
+    background: rgba(255,255,255,.02) !important;
+    border-radius: 14px !important;
+    padding: 5px !important;
+    gap: 3px !important;
+    border: 1px solid rgba(255,255,255,.06) !important;
+}
+.stTabs [data-baseweb="tab"] {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 10px !important;
+    color: #475569 !important;
+    font-family: 'Space Mono', monospace !important;
+    font-size: 0.74rem !important;
+    padding: 7px 18px !important;
+    transition: all .2s ease !important;
+    font-weight: 700 !important;
+    letter-spacing: .04em !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    background: rgba(255,255,255,.05) !important;
+    color: #94a3b8 !important;
+}
+.stTabs [aria-selected="true"] {
+    background: linear-gradient(135deg, rgba(0,212,255,.2), rgba(124,58,237,.2)) !important;
+    color: #00d4ff !important;
+    box-shadow: 0 0 14px rgba(0,212,255,.18), inset 0 1px 0 rgba(255,255,255,.08) !important;
+    text-shadow: 0 0 12px rgba(0,212,255,.5) !important;
+}
 
-# Clear History
-if st.button("🧹 Clear Chat History"):
-    st.session_state.history = []
-    if os.path.exists("chat_memory.json"):
-        os.remove("chat_memory.json")
-    if os.path.exists("voice_response.mp3"):
-        os.remove("voice_response.mp3")
-    st.rerun()
-def styled_header(title, icon="🧪", color="#00BFFF"):
-    st.markdown(
-        f"""
-        <div style="
-            background-color: {color}20;
-            border: 1px solid {color};
-            padding: 10px 16px;
-            font-size: 16px;
-            font-weight: bold;
-            border-radius: 8px;
-            margin-top: 15px;
-            color: white;
-        ">
-            {icon} {title}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+/* ── CODE BLOCKS ────────────────────────────────────────── */
+.stCode, pre {
+    background: #040608 !important;
+    border: 1px solid rgba(0,212,255,.12) !important;
+    border-radius: 12px !important;
+    font-family: 'Space Mono', monospace !important;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,.4) !important;
+}
+code {
+    font-family: 'Space Mono', monospace !important;
+    color: #67e8f9 !important;
+    background: rgba(0,212,255,.07) !important;
+    padding: 2px 7px !important;
+    border-radius: 5px !important;
+    border: 1px solid rgba(0,212,255,.12) !important;
+}
 
+/* ── DIVIDER ────────────────────────────────────────────── */
+hr {
+    border: none !important;
+    height: 1px !important;
+    background: linear-gradient(90deg, transparent, rgba(0,212,255,.2), rgba(124,58,237,.2), transparent) !important;
+    margin: 16px 0 !important;
+}
 
-# 🔁 TWO-WAY CODE EXPLANATION TOOL
-styled_header("Two-Way Code Explanation Tool", icon="🧠", color="#6366F1")
-with st.expander("Expand", expanded=False):
-    tabs = st.tabs(["🧵 Explain Code", "🛠 Generate Code", "📦 Generate Test Cases", "❗ Explain Errors"])
-    with tabs[0]:
-        st.markdown("### 🧵 Paste your code or upload a file:")
-        code_input = st.text_area("📝 Paste Code", height=200, key="explain_code_input")
-        code_file = st.file_uploader("📤 Or Upload Code File", type=["py", "cpp", "js", "java", "ts"], key="code_file")
-        if code_file:
-            uploaded_code = code_file.read().decode("utf-8")
-            st.code(uploaded_code, language="python")
-            code_input += f"\n# Uploaded File:\n{uploaded_code}"
-        if st.button("🧠 Explain This Code"):
-            with st.spinner("🔎 Analyzing code..."):
-                explain_prompt = ChatPromptTemplate.from_messages([
-                    ("system",
-     "You're a helpful and experienced coding assistant. Carefully read the code provided by the user. "
-     "Explain it line by line in a clear and concise manner, using simple language where possible. "
-     "After the line-by-line explanation, provide a high-level summary describing what the code does overall. "
-     "If the code uses any advanced or uncommon syntax, explain it briefly when it appears. "
-     "Output only the explanation — do not reprint the code itself."),
-    ("user", "{code}")
-                ])
-                explain_chain = explain_prompt | llm | StrOutputParser()
-                explanation = explain_chain.invoke({"code": code_input})
-                st.text_area("📘 Explanation", explanation, height=300)
-    with tabs[1]:
-        desc_input = st.text_area("📝 Describe what the code should do:", height=150, key="desc_input")
-        if st.button("🚀 Generate Code", key="two_way_code_gen"):
-            with st.spinner("⚙️ Generating code..."):
-                gen_prompt = ChatPromptTemplate.from_messages([
-                    ("system", 
-     "You're a helpful and professional AI software engineer. Write clean, efficient, and production-quality code based on the user's description. "
-     "Automatically choose the most appropriate programming language if not specified. "
-     "Ensure the code is functional, idiomatic, and follows best practices for that language. "
-     "If the task is ambiguous, make reasonable assumptions and add comments to clarify. "
-     "Only output the code — no explanations, no markdown formatting."),
-    ("user", "{desc}")
-                ])
-                gen_chain = gen_prompt | llm | StrOutputParser()
-                code_output = gen_chain.invoke({"desc": desc_input})
-                st.code(code_output, language="python")
-    with tabs[2]:
-        test_func = st.text_area("🧪 Paste your function here to generate tests:", height=180, key="test_input")
-        if st.button("📦 Generate Test Cases"):
-            with st.spinner("🧠 Writing tests for your function..."):
-                test_prompt = ChatPromptTemplate.from_messages([
-                    ("system",
-     "You're a professional test engineer. Generate comprehensive and well-structured unit tests for the given function. "
-     "Automatically detect the programming language and use the most appropriate testing framework (e.g., unittest or pytest for Python, Jest for JavaScript, JUnit for Java, Catch2 for C++, etc.). "
-     "Cover valid cases, edge cases, invalid inputs, and exception handling. Mock external dependencies if necessary. "
-     "Follow naming and structural best practices for the selected framework. Output only the complete test code without explanation or markdown."),
-    ("user", "{func}")
-                ])
-                test_chain = test_prompt | llm | StrOutputParser()
-                test_code = test_chain.invoke({"func": test_func})
-                st.code(test_code, language="python")
-    with tabs[3]:
-        traceback_input = st.text_area("❗ Paste your error traceback:", height=180, key="error_input")
-        if st.button("🔍 Explain Error"):
-            with st.spinner("🛠️ Diagnosing error..."):
-                error_prompt = ChatPromptTemplate.from_messages([
-                    ("system",
-     "You're a highly skilled debugging assistant. Analyze the following error message or traceback. "
-     "Clearly explain what the error means in simple terms, identify the likely cause, and suggest specific steps to fix it. "
-     "If the error includes a file and line number, use it to narrow down the issue. "
-     "Provide only the explanation and solution — do not repeat the error message."),
-    ("user", "{traceback}")
-                ])
-                error_chain = error_prompt | llm | StrOutputParser()
-                error_explanation = error_chain.invoke({"traceback": traceback_input})
-            st.text_area("📘 Explanation", error_explanation, height=250)
+/* ── ALERTS ─────────────────────────────────────────────── */
+[data-testid="stSuccess"] {
+    background: rgba(16,185,129,.07) !important;
+    border: 1px solid rgba(52,211,153,.25) !important;
+    border-left: 3px solid #10b981 !important;
+    border-radius: 10px !important;
+    color: #6ee7b7 !important;
+}
+[data-testid="stWarning"] {
+    background: rgba(245,158,11,.07) !important;
+    border: 1px solid rgba(245,158,11,.25) !important;
+    border-left: 3px solid #f59e0b !important;
+    border-radius: 10px !important;
+}
+[data-testid="stError"] {
+    background: rgba(239,68,68,.07) !important;
+    border: 1px solid rgba(239,68,68,.25) !important;
+    border-left: 3px solid #ef4444 !important;
+    border-radius: 10px !important;
+}
+[data-testid="stInfo"] {
+    background: rgba(0,212,255,.06) !important;
+    border: 1px solid rgba(0,212,255,.2) !important;
+    border-left: 3px solid #00d4ff !important;
+    border-radius: 10px !important;
+    color: #7dd3fc !important;
+}
 
-def estimate_time_complexity_with_gpt(code: str):
-    llm = ChatGroq(
-        temperature=0.2,
-        api_key= API_KEY,
-        model_name="llama3-8b-8192"
-    )
+/* ── SPINNER ─────────────────────────────────────────────── */
+[data-testid="stSpinner"] > div {
+    border-color: rgba(0,212,255,.15) !important;
+    border-top-color: #00d4ff !important;
+}
 
-    prompt = ChatPromptTemplate.from_template("""
-You are a senior software engineer. Analyze the following Python function and estimate its time complexity in Big-O notation. Also give a 1-2 line explanation.
+/* ── BADGES ─────────────────────────────────────────────── */
+.badge {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 12px; border-radius: 99px;
+    font-size: .68rem; font-weight: 700;
+    letter-spacing: .08em; text-transform: uppercase;
+    font-family: 'Space Mono', monospace;
+}
+.badge-cyan   { background:rgba(0,212,255,.1);   color:#00d4ff;  border:1px solid rgba(0,212,255,.25);  box-shadow:0 0 10px rgba(0,212,255,.15); }
+.badge-purple { background:rgba(124,58,237,.1);  color:#a78bfa;  border:1px solid rgba(124,58,237,.25); box-shadow:0 0 10px rgba(124,58,237,.15); }
+.badge-green  { background:rgba(16,185,129,.1);  color:#34d399;  border:1px solid rgba(16,185,129,.25); box-shadow:0 0 10px rgba(16,185,129,.15); }
+.badge-amber  { background:rgba(245,158,11,.1);  color:#fbbf24;  border:1px solid rgba(245,158,11,.25); box-shadow:0 0 10px rgba(245,158,11,.15); }
+.badge-red    { background:rgba(239,68,68,.1);   color:#f87171;  border:1px solid rgba(239,68,68,.25);  box-shadow:0 0 10px rgba(239,68,68,.15); }
 
-Function:
-{code}
+/* ── NAV ACTIVE ─────────────────────────────────────────── */
+.nav-active button {
+    background: linear-gradient(135deg, rgba(0,188,212,.25), rgba(124,58,237,.25)) !important;
+    border: 1px solid rgba(0,212,255,.4) !important;
+    color: #00d4ff !important;
+    font-weight: 700 !important;
+    box-shadow: 0 0 16px rgba(0,212,255,.2), inset 0 0 12px rgba(0,212,255,.05) !important;
+    text-shadow: 0 0 10px rgba(0,212,255,.4) !important;
+}
 
-Format:
-Time Complexity: O(...)
-Explanation: ...
-""")
+/* ── AI RESPONSE CARD ───────────────────────────────────── */
+.ai-response-card {
+    background: linear-gradient(135deg, rgba(0,212,255,.04), rgba(124,58,237,.03));
+    border: 1px solid rgba(0,212,255,.15);
+    border-left: 3px solid #00d4ff;
+    border-radius: 0 14px 14px 0;
+    padding: 18px 22px;
+    margin: 12px 0;
+    box-shadow: 0 4px 24px rgba(0,0,0,.3), 0 0 20px rgba(0,212,255,.05);
+    animation: fadeIn .3s ease both;
+}
 
-    chain = prompt | llm | StrOutputParser()
-    try:
-        result = chain.invoke({"code": code})  
+/* ── TERMINAL OUTPUT ────────────────────────────────────── */
+.terminal-output {
+    background: linear-gradient(135deg, #020305, #040608);
+    border: 1px solid rgba(0,212,255,.15);
+    border-radius: 14px;
+    padding: 18px 22px;
+    font-family: 'Space Mono', monospace;
+    font-size: .82rem;
+    color: #67e8f9;
+    box-shadow: inset 0 2px 12px rgba(0,0,0,.6), 0 0 20px rgba(0,212,255,.05);
+    white-space: pre-wrap;
+    line-height: 1.8;
+    position: relative;
+    overflow: hidden;
+}
+.terminal-output::before {
+    content: '● ● ●';
+    position: absolute;
+    top: 10px; left: 16px;
+    font-size: .6rem;
+    color: #1e3040;
+    letter-spacing: 6px;
+}
+.terminal-output-inner { margin-top: 16px; }
+.t-prompt { color: #10b981; font-weight: 700; }
+.t-error  { color: #ef4444; font-weight: 700; }
+.t-line   { color: #67e8f9; }
 
-        return result
-    except Exception as e:
-        return f"❌ Error: {e}"
+/* ── STAT ROW (chat page) ───────────────────────────────── */
+.stat-row {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    margin: 16px 0;
+}
+.stat-chip {
+    background: rgba(255,255,255,.04);
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 99px;
+    padding: 5px 14px;
+    font-family: 'Space Mono', monospace;
+    font-size: .7rem;
+    color: #64748b;
+    display: flex; align-items: center; gap: 6px;
+    transition: all .2s;
+}
+.stat-chip:hover { border-color: rgba(0,212,255,.3); color: #00d4ff; }
+.stat-chip b { color: #94a3b8; }
 
+/* ── FEATURE GRID ───────────────────────────────────────── */
+.feat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+    margin: 16px 0;
+}
+.feat-card {
+    background: rgba(255,255,255,.03);
+    border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px;
+    padding: 14px 16px;
+    transition: all .2s ease;
+    cursor: default;
+}
+.feat-card:hover {
+    border-color: rgba(0,212,255,.25);
+    background: rgba(0,212,255,.04);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0,0,0,.3);
+}
+.feat-icon { font-size: 1.4rem; margin-bottom: 6px; }
+.feat-name { font-size: .78rem; font-weight: 700; color: #cbd5e1; }
+.feat-desc { font-size: .68rem; color: #475569; margin-top: 3px; font-family: 'Space Mono', monospace; }
 
-def plot_complexity_curve(big_o: str):
-    x = np.linspace(1, 100, 100)
+/* ── PRO CODE BLOCK (VS Code style) ─────────────────────────────── */
+.code-block-wrapper {
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(0,212,255,.18);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.5), 0 8px 32px rgba(0,0,0,.55), 0 0 40px rgba(0,212,255,.06);
+    margin: 14px 0;
+    font-family: 'Space Mono', monospace;
+    animation: fadeUp .3s ease both;
+}
+.code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 9px 16px;
+    background: linear-gradient(90deg, #0d1117, #111827);
+    border-bottom: 1px solid rgba(0,212,255,.1);
+}
+.code-block-dots { display: flex; gap: 6px; align-items: center; }
+.code-block-dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+.dot-red    { background: #ef4444; box-shadow: 0 0 6px rgba(239,68,68,.5); }
+.dot-yellow { background: #f59e0b; box-shadow: 0 0 6px rgba(245,158,11,.5); }
+.dot-green  { background: #10b981; box-shadow: 0 0 6px rgba(16,185,129,.5); }
+.code-block-lang {
+    font-size: .68rem; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: #00d4ff;
+    background: rgba(0,212,255,.1); border: 1px solid rgba(0,212,255,.2);
+    border-radius: 99px; padding: 2px 12px;
+    font-family: 'Space Mono', monospace;
+    text-shadow: 0 0 10px rgba(0,212,255,.5);
+}
+.code-block-copy {
+    font-size: .66rem; color: #334155;
+    background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 6px; padding: 3px 10px; cursor: pointer;
+    font-family: 'Space Mono', monospace; letter-spacing: .06em; transition: all .2s;
+}
+.code-block-copy:hover { background: rgba(0,212,255,.1); border-color: rgba(0,212,255,.3); color: #00d4ff; }
+.code-block-body { display: flex; background: #020407; overflow-x: auto; padding: 14px 0; }
+.code-line-numbers {
+    padding: 0 14px 0 16px; text-align: right; user-select: none;
+    border-right: 1px solid rgba(0,212,255,.07); min-width: 44px;
+    color: #1e3a4a; font-size: .8rem; line-height: 1.75; letter-spacing: .02em;
+}
+.code-line-numbers span { display: block; }
+.code-content {
+    padding: 0 20px; font-size: .82rem; line-height: 1.75;
+    flex: 1; overflow-x: auto; white-space: pre; color: #a5f3fc; letter-spacing: .01em;
+}
+.tok-kw      { color: #c084fc; font-weight: 700; }
+.tok-builtin { color: #67e8f9; }
+.tok-string  { color: #86efac; }
+.tok-comment { color: #334155; font-style: italic; }
+.tok-number  { color: #fbbf24; }
+.tok-func    { color: #60a5fa; }
+.tok-bool    { color: #f472b6; font-weight: 700; }
+.tok-self    { color: #f97316; }
+.tok-deco    { color: #a78bfa; }
 
-    complexity_map = {
-        "O(1)": np.ones_like(x),
-        "O(log n)": np.log2(x),
-        "O(n)": x,
-        "O(n log n)": x * np.log2(x),
-        "O(n^2)": x ** 2,
-        "O(n^3)": x ** 3,
-        "O(2^n)": 2 ** x,
-        "O(n!)": [math.factorial(int(i)) if i < 20 else np.nan for i in x],
-    }
-
-    if big_o not in complexity_map:
-        st.warning(f"⚠️ Could not plot curve for: {big_o}")
-        return
-
-    y = complexity_map[big_o]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=y, mode='lines', name=big_o))
-    fig.update_layout(
-        title=f"Growth Curve: {big_o}",
-        xaxis_title="Input Size (n)",
-        yaxis_title="Operations",
-        height=400
-    )
-    st.plotly_chart(fig, use_container_width=True)
-
-            
-# 🧠 TIME COMPLEXITY ANALYZER SECTION
-styled_header("Time Complexity Analyzer (AI-Powered)", icon="📏", color="#FF5733")
-with st.expander("Expand",expanded=False):
-    code_input = st.text_area("🔍 Paste your function code here:")
-    if st.button("🧠 Analyze with GPT", key="analyze_complexity"):
-        if code_input.strip():
-            with st.spinner("Asking GPT to estimate time complexity..."):
-                result = estimate_time_complexity_with_gpt(code_input)
-                st.success("✅ GPT Analysis Complete")
-                st.markdown(f"```\n{result.strip()}\n```")
-
-                # Optional: try to extract Big-O notation for plotting
-                match = re.search(r"O\([\w\s\^\!\*nlog]+\)", result)
-                if match:
-                    st.markdown("📊 Visualizing Time Complexity Growth")
-                    plot_complexity_curve(match.group())
-                else:
-                    st.info("ℹ️ No recognizable Big-O notation found for plotting.")
-        else:
-            st.warning("⚠️ Please enter a valid Python function to analyze.")
-            
-#🧪API TESTING TOOL
-def load_lottie():
-    url = "https://assets9.lottiefiles.com/packages/lf20_jcikwtux.json"
-    r = requests.get(url)
-    if r.status_code == 200:
-        return r.json()
-    return None
-
-def api_testing_tool():
-    styled_header("API Testing Tool (Advanced)", icon="🧪", color="#21C55D")
-    st_lottie(load_lottie(), height=180, speed=1)
-
-    if "api_history" not in st.session_state:
-        st.session_state.api_history = []
-
-    with st.expander("🛠️ API Configuration", expanded=True):
-        col1, col2 = st.columns([2, 1])
-        api_url = st.text_input("🔗 Enter API URL", value=st.session_state.get("api_url", ""))
-        method = st.selectbox("HTTP Method", ["GET", "POST", "PUT", "DELETE"], index=0)
-        auth_token = st.text_input("🔐 Bearer Token (Optional)", value=st.session_state.get("auth_token", ""), type="password")
-
-        headers_input = st.text_area("🔧 Headers (JSON)", value=st.session_state.get("headers_input", '{\n  "Content-Type": "application/json"\n}'), height=120)
-        body_input = st.text_area("📦 Request Body (JSON)", value=st.session_state.get("body_input", "{}"), height=150) if method != "GET" else ""
-
-        expected_status = st.text_input("✅ Expected HTTP Status Code", value=st.session_state.get("expected_status", ""))
-        expected_body = st.text_area("🧾 Expected JSON Response", value=st.session_state.get("expected_body", ""), height=150)
-
-    if st.button("🚀 Send API Request"):
-        try:
-            headers = json.loads(headers_input)
-        except json.JSONDecodeError as e:
-            st.error(f"❌ Invalid JSON in headers:\n{str(e)}")
-            return
-
-        if auth_token:
-            headers["Authorization"] = f"Bearer {auth_token}"
-
-        data = None
-        if method != "GET":
-            try:
-                data = json.loads(body_input)
-            except json.JSONDecodeError as e:
-                st.error(f"❌ Invalid JSON in request body:\n{str(e)}")
-                return
-
-        try:
-            with st.spinner("📡 Sending request..."):
-                with httpx.Client(timeout=10.0) as client:
-                    response = client.request(method=method, url=api_url, headers=headers, json=data)
-
-            st.success(f"✅ Status Code: {response.status_code}")
-            st.code(response.text, language="json")
-            st.json(dict(response.headers))
-
-            curl_parts = [f"curl -X {method} \"{api_url}\""]
-            for k, v in headers.items():
-                curl_parts.append(f"  -H \"{k}: {v}\"")
-            if data:
-                curl_parts.append(f"  -d '{json.dumps(data, indent=2)}'")
-            curl_command = " \\\n".join(curl_parts)
-
-            with st.expander("📋 View cURL Command"):
-                st.code(curl_command, language="bash")
-                st.button("📋 Copy to Clipboard (manual)", on_click=lambda: st.toast("Copied to clipboard (manually)!"))
-
-            st.session_state.api_history.insert(0, {
-                "url": api_url,
-                "method": method,
-                "status": response.status_code,
-                "headers": headers,
-                "body": data,
-                "response": response.text
-            })
-
-            if expected_status:
-                try:
-                    if int(expected_status) == response.status_code:
-                        st.success("✅ Status code matched.")
-                    else:
-                        st.error(f"❌ Expected {expected_status}, got {response.status_code}")
-                except:
-                    st.warning("⚠️ Expected status must be an integer.")
-
-            if expected_body:
-                try:
-                    if json.loads(expected_body) == response.json():
-                        st.success("✅ Response matches expected JSON.")
-                    else:
-                        st.error("❌ Response body mismatch.")
-                except:
-                    st.warning("⚠️ Error comparing expected and actual JSON.")
-
-        except Exception as e:
-            st.error(f"❌ Request failed: {str(e)}")
-
-    styled_header("📜 Request History", icon="🧾", color="#4F46E5")
-    if st.session_state.api_history:
-        st.markdown("### 🗂️ View and manage history")
-        if st.button("🧹 Clear History"):
-            st.session_state.api_history = []
-            st.success("🧹 History cleared successfully.")
-            st.rerun()
-
-        for i, entry in enumerate(st.session_state.api_history[:10]):
-            with st.expander(f"{entry['method']} {entry['url']} → {entry['status']}"):
-                st.code(json.dumps(entry['headers'], indent=2), language="json")
-                if entry["body"]:
-                    st.markdown("#### Request Body")
-                    st.code(json.dumps(entry["body"], indent=2), language="json")
-                st.markdown("#### Response")
-                st.code(entry["response"], language="json")
-
-        history_json = json.dumps(st.session_state.api_history, indent=2)
-        st.download_button(
-            label="⬇️ Download History as JSON",
-            data=history_json,
-            file_name="api_history.json",
-            mime="application/json"
-        )
-    else:
-        st.info("No request history yet.")
-api_testing_tool()   
-    
-
-api_list = [
-    {"name": "CodeNova Auth", "url": "https://jsonplaceholder.typicode.com/posts", "method": "GET"},
-    {"name": "User Endpoint", "url": "https://jsonplaceholder.typicode.com/users", "method": "GET"},
-    # Add more APIs here
-]
-
-# ------------------ MONITOR FUNCTION ------------------
-def monitor_api(endpoint):
-    try:
-        start = time.time()
-        response = httpx.request(endpoint["method"], endpoint["url"], timeout=10)
-        duration = round(time.time() - start, 2)
-        return {
-            "name": endpoint["name"],
-            "status_code": response.status_code,
-            "response_time": duration,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "ok": response.status_code < 400
-        }
-    except Exception as e:
-        return {
-            "name": endpoint["name"],
-            "status_code": None,
-            "response_time": None,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "ok": False,
-            "error": str(e)
-        }
-        
-
-# ------------------ SECTION UI ------------------
-styled_header("📡 REST API Monitoring", icon="📶", color="#10B981")  # ✅ Green header
-
-# Inject adaptive dark-mode friendly styling
-st.markdown("""
-    <style>
-    .api-monitor-box {
-        border: 2px solid rgba(34, 197, 94, 0.5);  /* Green border with transparency */
-        padding: 15px;
-        border-radius: 12px;
-        margin-bottom: 15px;
-        background-color: rgba(255, 255, 255, 0.05);  /* Light-transparent for dark theme */
-        color: inherit;  /* Inherit text color from theme */
-    }
-    .api-monitor-box.error {
-        border-color: rgba(239, 68, 68, 0.5);  /* Red border */
-    }
-    </style>
+/* ── CAPTION ────────────────────────────────────────────── */
+.stCaption { color: #334155 !important; font-family: 'Space Mono', monospace !important; }
+</style>
 """, unsafe_allow_html=True)
 
-with st.expander("🧪 Enter API Details to Monitor", expanded=True):
-    api_name = st.text_input("API Name", placeholder="e.g. CodeNova Auth")
-    api_url = st.text_input("API URL", placeholder="https://yourapi.com/endpoint")
-    method = st.selectbox("Request Method", ["GET", "POST", "PUT", "DELETE"])
 
-    if st.button("🔁 Check API Health"):
-        if api_name and api_url:
-            with st.spinner("📡 Monitoring API..."):
-                res = monitor_api({"name": api_name, "url": api_url, "method": method})
+# ═════════════════════════════════════════════════════════════════════════════
+# HELPERS
+# ═════════════════════════════════════════════════════════════════════════════
 
-            status_color = "#22C55E" if res["ok"] else "#EF4444"
-            box_class = "api-monitor-box" + (" error" if not res["ok"] else "")
-
-            st.markdown(f"""
-                <div class="{box_class}">
-                    <h4>🌐 <b>{res['name']}</b></h4>
-                    <p><b>🕒 Time:</b> {res['timestamp']}</p>
-                    <p><b>📤 Status Code:</b> {res['status_code']}</p>
-                    <p><b>⚡ Response Time:</b> {res['response_time']}s</p>
-                    <p><b>Status:</b> {'✅ API is Healthy' if res['ok'] else f"❌ API Failed: {res.get('error', 'Unknown Error')}"} </p>
-                </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.warning("Please provide both a valid name and URL.")
-
-
-       
-#Unit Testing Generator
-styled_header("Unit Testing Generator", icon="📄", color="#F59E0B")
-with st.expander("Expand",expanded=False):
-    st.markdown("### 🧪 Paste a function/component to generate unit tests:")
-
-    # Language/Framework Selector
-    language = st.selectbox(
-        "🔤 Choose the language or framework:",
-        ["Python", "Java", "JavaScript", "C++", "Go", "Rust", "C#", "React", "Next.js", "Node.js"],
-        key="unit_test_lang"
+def sec_header(title: str, icon: str = "◆", color: str = "#00d4ff") -> None:
+    st.markdown(
+        f'<div class="sec-header" style="color:{color};border:1px solid {color}33;'
+        f'background:linear-gradient(90deg,{color}18,{color}08);'
+        f'box-shadow:0 0 14px {color}18;padding-left:16px;">{icon} {title}</div>',
+        unsafe_allow_html=True,
     )
 
-    unit_input = st.text_area("🧩 Function/Component Code:", height=200, key="unit_code_input")
 
-    # Extension mapping
-    file_extensions = {
-        "Python": "py", "Java": "java", "JavaScript": "js", "C++": "cpp", "Go": "go",
-        "Rust": "rs", "C#": "cs", "React": "jsx", "Next.js": "js", "Node.js": "js"
+def metric_box(col, value, label: str, color: str = "#00d4ff") -> None:
+    col.markdown(
+        f'<div class="metric-card" style="border-color:{color}22;'
+        f'background:linear-gradient(145deg,{color}09,{color}04);">'
+        f'<div style="width:32px;height:3px;background:linear-gradient(90deg,{color},{color}55);'
+        f'border-radius:99px;margin:0 auto 10px;"></div>'
+        f'<div class="metric-val" style="color:{color};text-shadow:0 0 20px {color}66;">{value}</div>'
+        f'<div class="metric-label">{label}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
+
+
+import html as _html_mod
+import re as _re_mod
+
+def _highlight_python(code: str) -> str:
+    """
+    Accurate Python syntax highlighter using the stdlib `tokenize` module.
+    Returns HTML string. Each token is classified exactly once — no regex
+    re-processing of already-emitted span tags.
+    """
+    import tokenize as _tok
+    import io as _io
+    import html as _h
+
+    TOKEN_CLASS = {
+        _tok.COMMENT:  "tok-comment",
+        _tok.STRING:   "tok-string",
+        _tok.NUMBER:   "tok-number",
     }
 
-    lang_prompts = {
-        "Python": (
-                    "You're a Python test engineer. Generate unit tests using the unittest framework for the provided function."
-                ),
-                "Java": (
-                    "You're a Java developer. Generate JUnit 5 test cases with descriptive test methods."
-                ),
-                "JavaScript": (
-                    "You're a JavaScript developer. Use the Jest framework to write unit tests for the provided function."
-                ),
-                "C++": (
-                    "You're a C++ developer. Generate Google Test (gtest) unit tests for the provided function."
-                ),
-                "Go": (
-                    "You're a Go developer. Generate Go unit tests using Go's testing package (`testing`).\n"
-                    "- Use `t.Run` and proper table-driven tests."
-                ),
-                "Rust": (
-                    "You're a Rust developer. Generate Rust unit tests using `#[cfg(test)]` and `#[test]`.\n"
-                    "- Cover typical and edge cases."
-                ),
-                "C#": (
-                    "You're a C# developer. Generate unit tests using NUnit or MSTest for the provided method."
-                ),
-                "React": (
-                    "You're a frontend developer. Given a React component, generate unit tests using `React Testing Library` and `Jest`.\n"
-                    "- Test rendering, props, events, and effects."
-                ),
-                "Next.js": (
-                    "You're a Next.js developer. Generate tests using Jest + React Testing Library for components and API routes.\n"
-                    "- If it's an API route, test responses using `supertest` or similar."
-                ),
-                "Node.js": (
-                    "You're a Node.js backend developer. Generate unit tests using `Mocha` and `Chai` or `Jest`.\n"
-                    "- Use `describe`, `it`, and assertions like `expect`, `should`, or `assert`."
+    KEYWORDS = frozenset({
+        "False","None","True","and","as","assert","async","await","break",
+        "class","continue","def","del","elif","else","except","finally",
+        "for","from","global","if","import","in","is","lambda","nonlocal",
+        "not","or","pass","raise","return","try","while","with","yield",
+    })
+
+    BUILTINS = frozenset({
+        "abs","all","any","bool","bytes","callable","chr","dict","dir",
+        "divmod","enumerate","eval","exec","filter","float","format",
+        "frozenset","getattr","globals","hasattr","hash","help","hex",
+        "id","input","int","isinstance","issubclass","iter","len","list",
+        "locals","map","max","memoryview","min","next","object","oct",
+        "open","ord","pow","print","property","range","repr","reversed",
+        "round","set","setattr","slice","sorted","staticmethod","str",
+        "sum","super","tuple","type","vars","zip",
+    })
+
+    # ── tokenize ──────────────────────────────────────────────────────────────
+    try:
+        tokens = list(_tok.generate_tokens(_io.StringIO(code).readline))
+    except _tok.TokenError:
+        return _h.escape(code)          # fallback: plain escaped text
+
+    lines   = code.splitlines(keepends=True)
+    result  = []
+    row, col = 1, 0                      # cursor position in source
+
+    def advance_to(trow, tcol):
+        """Emit raw (escaped) source text between cursor and token start."""
+        nonlocal row, col
+        while row < trow or (row == trow and col < tcol):
+            if row > len(lines):
+                break
+            line = lines[row - 1]
+            if row < trow:
+                result.append(_h.escape(line[col:]))
+                row += 1
+                col  = 0
+            else:
+                result.append(_h.escape(line[col:tcol]))
+                col  = tcol
+
+    for tok_type, tok_str, tok_start, tok_end, _ in tokens:
+        if tok_type in (_tok.ENCODING, _tok.ENDMARKER, _tok.NEWLINE,
+                        _tok.NL, _tok.INDENT, _tok.DEDENT):
+            continue
+        if tok_type == _tok.ERRORTOKEN:
+            advance_to(*tok_start)
+            result.append(_h.escape(tok_str))
+            row, col = tok_end
+            continue
+
+        advance_to(*tok_start)
+
+        escaped = _h.escape(tok_str)
+
+        if tok_type in TOKEN_CLASS:
+            cls = TOKEN_CLASS[tok_type]
+            result.append(f'<span class="{cls}">{escaped}</span>')
+        elif tok_type == _tok.NAME:
+            if tok_str in KEYWORDS:
+                result.append(f'<span class="tok-kw">{escaped}</span>')
+            elif tok_str in BUILTINS:
+                result.append(f'<span class="tok-builtin">{escaped}</span>')
+            elif tok_str == "self":
+                result.append(f'<span class="tok-self">{escaped}</span>')
+            else:
+                result.append(escaped)
+        elif tok_type == _tok.OP:
+            result.append(f'<span class="tok-op">{escaped}</span>')
+        else:
+            result.append(escaped)
+
+        row, col = tok_end
+
+    # emit anything after the last token
+    for ln in lines[row - 1:]:
+        result.append(_h.escape(ln[col:]))
+        col = 0
+
+    return "".join(result)
+
+
+
+_LANG_LABELS = {
+    "python":"Python","py":"Python","javascript":"JavaScript","js":"JavaScript",
+    "typescript":"TypeScript","ts":"TypeScript","java":"Java","cpp":"C++",
+    "go":"Go","rust":"Rust","rs":"Rust","csharp":"C#","cs":"C#","sql":"SQL",
+    "bash":"Bash","sh":"Bash","json":"JSON","html":"HTML","css":"CSS",
+    "docker":"Dockerfile","diff":"Diff","text":"Output","jsx":"React","tsx":"React",
+}
+
+
+def render_code(code: str, language: str = "python", show_lines: bool = True) -> None:
+    """
+    Render a professional VS Code-style code block.
+    Uses streamlit.components.v1.html() to bypass Streamlit's HTML sanitizer
+    so inner <span> syntax-highlight tags are preserved.
+    """
+    import streamlit.components.v1 as _cv1
+
+    if not isinstance(code, str):
+        code = str(code)
+
+    lang_key   = language.lower().strip()
+    lang_label = _LANG_LABELS.get(lang_key, language.upper() or "Code")
+
+    highlighted = _highlight_python(code) if lang_key in ("python", "py") else _html_mod.escape(code)
+    lines       = highlighted.split("\n")
+    n           = len(lines)
+
+    # line numbers
+    line_nums_html = "".join(f"<span>{i}</span>" for i in range(1, n + 1)) if show_lines else ""
+    line_nums_col  = f'<div class="ln">{line_nums_html}</div>' if show_lines else ""
+
+    # safe copy content
+    safe_copy = code.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
+    body = "\n".join(lines)
+
+    # Calculate iframe height: ~22px per line + 60px header + 30px padding
+    height = max(120, n * 22 + 90)
+
+    full_html = f"""<!DOCTYPE html>
+<html>
+<head>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{
+    background: transparent;
+    font-family: 'Space Mono', 'Fira Code', 'Consolas', monospace;
+  }}
+  .wrapper {{
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid rgba(0,212,255,.22);
+    box-shadow: 0 0 0 1px rgba(0,0,0,.6),
+                0 8px 32px rgba(0,0,0,.6),
+                0 0 40px rgba(0,212,255,.07);
+    background: #020407;
+  }}
+  /* ── Header ── */
+  .header {{
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: linear-gradient(90deg, #0d1117 0%, #111827 100%);
+    border-bottom: 1px solid rgba(0,212,255,.12);
+  }}
+  .dots {{ display:flex; gap:7px; align-items:center; }}
+  .dot  {{ width:12px; height:12px; border-radius:50%; }}
+  .d-r  {{ background:#ef4444; box-shadow:0 0 7px rgba(239,68,68,.6); }}
+  .d-y  {{ background:#f59e0b; box-shadow:0 0 7px rgba(245,158,11,.6); }}
+  .d-g  {{ background:#10b981; box-shadow:0 0 7px rgba(16,185,129,.6); }}
+  .lang-badge {{
+    font-size:.68rem; font-weight:700; letter-spacing:.15em;
+    text-transform:uppercase; color:#00d4ff;
+    background:rgba(0,212,255,.1); border:1px solid rgba(0,212,255,.25);
+    border-radius:99px; padding:3px 14px;
+    text-shadow:0 0 12px rgba(0,212,255,.6);
+  }}
+  .copy-btn {{
+    font-size:.66rem; color:#475569;
+    background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
+    border-radius:7px; padding:4px 12px; cursor:pointer;
+    letter-spacing:.07em; transition:all .2s;
+    font-family: 'Space Mono', monospace;
+  }}
+  .copy-btn:hover {{
+    background:rgba(0,212,255,.12); border-color:rgba(0,212,255,.35); color:#00d4ff;
+  }}
+  /* ── Body ── */
+  .body {{
+    display: flex;
+    overflow-x: auto;
+    padding: 14px 0;
+    background: #020407;
+  }}
+  .ln {{
+    padding: 0 14px 0 16px;
+    text-align: right;
+    user-select: none;
+    border-right: 1px solid rgba(0,212,255,.07);
+    min-width: 48px;
+    color: #1e3a4a;
+    font-size: .8rem;
+    line-height: 1.75;
+    flex-shrink: 0;
+  }}
+  .ln span {{ display:block; }}
+  .code {{
+    padding: 0 20px;
+    font-size: .82rem;
+    line-height: 1.75;
+    flex: 1;
+    white-space: pre;
+    color: #a5f3fc;
+    letter-spacing: .01em;
+  }}
+  /* ── Syntax tokens ── */
+  .tok-kw      {{ color:#c084fc; font-weight:700; }}
+  .tok-builtin {{ color:#67e8f9; }}
+  .tok-string  {{ color:#86efac; }}
+  .tok-comment {{ color:#334155; font-style:italic; }}
+  .tok-number  {{ color:#fbbf24; }}
+  .tok-bool    {{ color:#f472b6; font-weight:700; }}
+  .tok-self    {{ color:#f97316; }}
+  .tok-deco    {{ color:#a78bfa; }}
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <div class="header">
+    <div class="dots">
+      <span class="dot d-r"></span>
+      <span class="dot d-y"></span>
+      <span class="dot d-g"></span>
+    </div>
+    <span class="lang-badge">{lang_label}</span>
+    <button class="copy-btn" id="copybtn">&#10232; Copy</button>
+  </div>
+  <div class="body">
+    {line_nums_col}
+    <div class="code">{body}</div>
+  </div>
+</div>
+<script>
+  document.getElementById('copybtn').addEventListener('click', function() {{
+    var code = `{safe_copy}`;
+    navigator.clipboard.writeText(code).then(function() {{
+      document.getElementById('copybtn').textContent = '✓ Copied!';
+      setTimeout(function() {{
+        document.getElementById('copybtn').textContent = '⎘ Copy';
+      }}, 1500);
+    }});
+  }});
+</script>
+</body>
+</html>"""
+
+    _cv1.html(full_html, height=height, scrolling=False)
+
+
+
+
+def render_llm_response(text: str) -> None:
+    """
+    Smart renderer for LLM responses.
+    Splits on fenced code blocks (```lang ... ```) and renders:
+      - prose   → st.markdown()
+      - code    → render_code()  (VS Code-style iframe block)
+    """
+    if not text:
+        return
+
+    # Pattern: optional lang tag, then code content
+    FENCE = re.compile(r'```(\w*)\n?(.*?)```', re.DOTALL)
+    pos   = 0
+
+    for m in FENCE.finditer(text):
+        # Render prose before this block
+        prose = text[pos:m.start()].strip()
+        if prose:
+            st.markdown(prose)
+
+        lang = m.group(1).strip().lower() or "python"
+        code = m.group(2)
+        # Remove a trailing newline that most LLMs add before closing ```
+        if code.endswith('\n'):
+            code = code[:-1]
+
+        render_code(code, language=lang)
+        pos = m.end()
+
+    # Render any trailing prose after the last code block
+    tail = text[pos:].strip()
+    if tail:
+        st.markdown(tail)
+
+
+@st.cache_resource
+def _get_db():
+    return utils.init_db()
+
+
+conn = _get_db()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SESSION STATE INIT
+# ═════════════════════════════════════════════════════════════════════════════
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+if "history" not in st.session_state:
+    st.session_state.history = utils.load_chat_history(conn, st.session_state.session_id)
+if "selected_model" not in st.session_state:
+    st.session_state.selected_model = list(utils.GROQ_MODELS.keys())[1]
+if "page" not in st.session_state:
+    st.session_state.page = "💬 AI Chat"
+if "api_history" not in st.session_state:
+    st.session_state.api_history = []
+if "api_profiles" not in st.session_state:
+    st.session_state.api_profiles = utils.load_api_profiles(conn)
+if "monitor_history" not in st.session_state:
+    st.session_state.monitor_history = []
+
+
+def llm():
+    """Always returns a fresh LLM matching the currently selected model."""
+    return utils.get_llm(st.session_state.selected_model)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ═════════════════════════════════════════════════════════════════════════════
+PAGES = [
+    "💬 AI Chat",
+    "🔬 Code Tools",
+    "🖥️ Dev Sandbox",
+    "🌐 API Suite",
+    "⚙️ Generators",
+    "📚 Snippets",
+]
+
+with st.sidebar:
+    st.markdown("""
+    <div style="text-align:center;padding:20px 0 10px;">
+        <div style="
+            font-family:'Syne',sans-serif;font-weight:900;font-size:1.7rem;
+            background:linear-gradient(135deg,#00d4ff,#7c3aed,#10b981);
+            background-size:200% 200%;
+            -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+            background-clip:text;letter-spacing:-1px;
+            filter:drop-shadow(0 0 16px rgba(0,212,255,.35));
+        ">⚡ CodeNova</div>
+        <div style="
+            font-family:'Space Mono',monospace;font-size:.6rem;
+            color:#1e3a4a;letter-spacing:.3em;text-transform:uppercase;
+            margin-top:4px;
+        ">AI DEV SUITE v2</div>
+        <div style="
+            width:60%;height:1px;
+            background:linear-gradient(90deg,transparent,rgba(0,212,255,.4),transparent);
+            margin:12px auto 0;
+        "></div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Navigation ──
+    st.markdown('<div style="font-family:Space Mono,monospace;font-size:.6rem;color:#1e3a4a;letter-spacing:.22em;text-transform:uppercase;margin:4px 0 8px;padding-left:4px;">Navigation</div>', unsafe_allow_html=True)
+    for page in PAGES:
+        is_active = st.session_state.page == page
+        if is_active:
+            st.markdown('<div class="nav-active">', unsafe_allow_html=True)
+        if st.button(page, key=f"nav_{page}", use_container_width=True):
+            st.session_state.page = page
+            st.rerun()
+        if is_active:
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.divider()
+
+    # ── Model selector ──
+    st.markdown('<div style="font-family:Space Mono,monospace;font-size:.6rem;color:#1e3a4a;letter-spacing:.22em;text-transform:uppercase;margin:4px 0 8px;padding-left:4px;">LLM Model</div>', unsafe_allow_html=True)
+    model_choice = st.selectbox(
+        "Model", list(utils.GROQ_MODELS.keys()),
+        index=list(utils.GROQ_MODELS.keys()).index(st.session_state.selected_model),
+        label_visibility="collapsed",
+    )
+    if model_choice != st.session_state.selected_model:
+        st.session_state.selected_model = model_choice
+        st.rerun()
+    st.caption(f"ID: `{utils.GROQ_MODELS[st.session_state.selected_model]}`")
+
+    st.divider()
+
+    # ── Chat utilities ──
+    if st.session_state.page == "💬 AI Chat":
+        st.markdown('<div style="font-family:Space Mono,monospace;font-size:.6rem;color:#1e3a4a;letter-spacing:.22em;text-transform:uppercase;margin:4px 0 8px;padding-left:4px;">Chat Utilities</div>', unsafe_allow_html=True)
+
+        new_sess = st.button("🆕 New Session", use_container_width=True)
+        if new_sess:
+            st.session_state.session_id = str(uuid.uuid4())[:8]
+            st.session_state.history = []
+            st.rerun()
+
+        if st.button("🧼 Clear History", use_container_width=True):
+            utils.clear_chat_history(conn, st.session_state.session_id)
+            st.session_state.history = []
+            st.rerun()
+
+        if st.button("📄 Export PDF", use_container_width=True):
+            if st.session_state.history:
+                pdf_buf = utils.export_chat_pdf(
+                    st.session_state.history, st.session_state.session_id
                 )
-            }
-
-            
-    lang_map = {
-        "Python": "python", "Java": "java", "JavaScript": "javascript", "C++": "cpp",
-        "Go": "go", "Rust": "rust", "C#": "csharp", "React": "javascript",
-        "Next.js": "javascript", "Node.js": "javascript"
-    }
-
-    if st.button("🧪 Generate Unit Tests") and unit_input.strip():
-        with st.spinner("🧠 Generating unit tests..."):
-
-            unit_prompt = ChatPromptTemplate.from_messages([
-                ("system", lang_prompts[language]),
-                ("user", "{func}")
-            ])
-            unit_chain = unit_prompt | llm | StrOutputParser()
-            unit_output = unit_chain.invoke({"func": unit_input})
-
-            st.markdown("### ✅ Generated Unit Test:")
-            st.code(unit_output, language=lang_map[language])
-
-            # ------------------------------
-            # Export Logic: Downloadable file
-            # ------------------------------
-            file_name = f"unit_test.{file_extensions[language]}"
-            file_content = unit_output.encode("utf-8")
-            file_buffer = BytesIO(file_content)
-
-            # 📁 Download section
-            with st.container():
-                st.markdown("#### ⬇️ Export Test File:")
                 st.download_button(
-                    label="📤 Download Test File",
-                    data=file_buffer,
-                    file_name=file_name,
-                    mime="text/plain",
-                    use_container_width=True
+                    "⬇️ Download PDF", pdf_buf,
+                    file_name=f"codenova_{st.session_state.session_id}.pdf",
+                    mime="application/pdf",
+                    use_container_width=True,
                 )
-                
-client_api = ChatGroq(api_key=API_KEY, model_name="llama-3.3-70b-versatile")
-# Regex Generator and Tester
-styled_header("Regex Generator and Tester", icon="🧩", color="#9CFF33")
-
-with st.expander("Expand", expanded=False):
-    regex_description = st.text_area(
-        "Describe the pattern you want to match:",
-        placeholder="Example: match an email address"
-    )
-    sample_text = st.text_area(
-        "Sample text to test (optional):",
-        placeholder="Paste some text here to test your regex"
-    )
-
-    def _clean_pattern(text: str) -> str:
-        txt = text.strip()
-        if txt.startswith("```"):
-            parts = txt.split("```")
-            if len(parts) >= 3:
-                txt = parts[1].strip()
             else:
-                txt = txt.replace("```", "").strip()
-        if (txt.startswith("/") and txt.endswith("/")) or (txt.startswith("r/") and txt.endswith("/")):
-            txt = txt[1:-1].strip()
-        if (txt.startswith("'") and txt.endswith("'")) or (txt.startswith('"') and txt.endswith('"')):
-            txt = txt[1:-1].strip()
-        if txt.startswith("r'") and txt.endswith("'"):
-            txt = txt[2:-1].strip()
-        if txt.startswith('r"') and txt.endswith('"'):
-            txt = txt[2:-1].strip()
-        if txt.lower().startswith("python"):
-            txt = txt[len("python"):].strip()
-        return txt.strip("` ;")
+                st.warning("No messages yet.")
 
-    # ------------------ Generate Regex ------------------
-    if st.button("🧠 Generate Regex"):
-        if not regex_description.strip():
-            st.warning("Please enter a description for the regex.")
-        else:
+        if st.button("💾 Export JSON", use_container_width=True):
+            if st.session_state.history:
+                st.download_button(
+                    "⬇️ Download JSON",
+                    json.dumps(st.session_state.history, indent=2),
+                    file_name=f"chat_{st.session_state.session_id}.json",
+                    mime="application/json",
+                    use_container_width=True,
+                )
+
+    st.divider()
+    st.markdown(
+        f'''<div style="
+            margin-top:8px;padding:12px;
+            background:rgba(0,212,255,.04);
+            border:1px solid rgba(0,212,255,.1);
+            border-radius:10px;text-align:center;
+        ">
+            <div style="font-family:Space Mono,monospace;font-size:.6rem;color:#1e3a4a;letter-spacing:.1em;margin-bottom:6px;">SESSION INFO</div>
+            <div style="font-family:Space Mono,monospace;font-size:.65rem;">
+                <span style="color:#334155;">id:</span>
+                <span style="color:#0e7490;">{st.session_state.session_id}</span>
+            </div>
+            <div style="font-family:Space Mono,monospace;font-size:.65rem;margin-top:3px;">
+                <span style="color:#334155;">llm:</span>
+                <span style="color:#7c3aed;">{st.session_state.selected_model.split()[1]}</span>
+            </div>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# PAGES
+# ═════════════════════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────
+# 1. AI CHAT
+# ─────────────────────────────────────────────
+
+def page_chat():
+    st.markdown('<div class="nova-title">CodeNova</div>', unsafe_allow_html=True)
+    st.markdown('<div class="nova-sub">Your AI-Powered Developer Suite</div>', unsafe_allow_html=True)
+    st.markdown("""
+    <div class="stat-row" style="justify-content:center;margin-top:14px;">
+        <div class="stat-chip">🧠 <b>3</b> LLM Models</div>
+        <div class="stat-chip">⚡ <b>15+</b> AI Tools</div>
+        <div class="stat-chip">🗄️ <b>SQLite</b> Persistence</div>
+        <div class="stat-chip">🎤 <b>Voice</b> Input</div>
+        <div class="stat-chip">📤 <b>PDF/JSON</b> Export</div>
+    </div>
+    <div style="width:100%;height:1px;
+        background:linear-gradient(90deg,transparent,rgba(0,212,255,.2),rgba(124,58,237,.2),transparent);
+        margin:18px 0 20px;"></div>
+    """, unsafe_allow_html=True)
+
+    # voice input (optional)
+    with st.expander("🎤 Voice Input (optional)"):
+        audio_val = st.audio_input("Record your question")
+        voice_text = None
+        if audio_val:
             try:
-                regex_prompt = (
-                    "Return ONLY a Python regular-expression pattern for this requirement, "
-                    "with no description, no code fences, and no delimiters:\n"
-                    f"{regex_description}"
-                )
-                resp = client_api.invoke(regex_prompt)          
-                generated_regex = _clean_pattern(resp.content) 
+                import speech_recognition as sr
+                recognizer = sr.Recognizer()
+                with sr.AudioFile(audio_val) as src:
+                    audio = recognizer.record(src)
+                voice_text = recognizer.recognize_google(audio)
+                st.info(f"Heard: **{voice_text}**")
+            except Exception as exc:
+                st.warning(f"Voice recognition failed: {exc}")
 
-                if not generated_regex:
-                    st.error("Model returned an empty pattern. Try rephrasing the description.")
-                else:
-                    # save regex in session state
-                    st.session_state["generated_regex"] = generated_regex
+    # chat history
+    for msg in st.session_state.history:
+        with st.chat_message(msg["role"]):
+            render_llm_response(msg["content"])
 
-                    st.subheader("Generated Regex Pattern")
-                    st.code(generated_regex, language="regex")
+    # input
+    user_input = st.chat_input("Ask a coding question…")
+    prompt_text = voice_text if (voice_text if "voice_text" in dir() else None) else user_input
 
-                    st.markdown(
-                        f"""
-                        <button onclick="navigator.clipboard.writeText('{generated_regex.replace("'", "\\'")}')"
-                                style="background-color:#4CAF50;color:white;border:none;padding:8px 12px;border-radius:6px;cursor:pointer;">
-                            📋 Copy Regex
-                        </button>
-                        """,
-                        unsafe_allow_html=True
-                    )
+    if prompt_text:
+        st.session_state.history.append({"role": "user", "content": prompt_text})
+        utils.save_chat_message(conn, st.session_state.session_id, "user", prompt_text, st.session_state.selected_model)
+        with st.chat_message("user"):
+            st.markdown(prompt_text)
 
-                    explain_prompt = (
-                        "Explain briefly and clearly what this Python regex does. "
-                        "Do NOT repeat the pattern in code fences. Keep it under 6 lines.\n"
-                        f"Pattern: {generated_regex}"
-                    )
-                    exp_resp = client_api.invoke(explain_prompt)  
-                    explanation = exp_resp.content.strip()
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking…"):
+                chain  = utils.build_chat_chain(llm())
+                answer = chain.invoke({"question": prompt_text})
+            render_llm_response(answer)
+            # subtle label badge
+            st.markdown(
+                f'<span class="badge badge-cyan">'
+                f'⚡ {st.session_state.selected_model.split()[1]} {st.session_state.selected_model.split()[0]}</span>',
+                unsafe_allow_html=True,
+            )
 
-                    st.subheader("Regex Explanation")
-                    st.markdown(explanation)
+            # optional TTS
+            tts_buf = utils.text_to_speech(answer)
+            if tts_buf:
+                st.audio(tts_buf, format="audio/mp3")
 
-            except Exception as e:
-                st.error(f"Error generating regex or explanation: {e}")
+        st.session_state.history.append({"role": "assistant", "content": answer})
+        utils.save_chat_message(conn, st.session_state.session_id, "assistant", answer, st.session_state.selected_model)
 
-    # ------------------ Test Regex ------------------
-    if sample_text.strip() and "generated_regex" in st.session_state:
-        try:
-            pattern = re.compile(st.session_state["generated_regex"])
-            matches = pattern.findall(sample_text)
 
-            if not matches:
-                search_match = pattern.search(sample_text)
-                if search_match:
-                    matches = [search_match.group()]
+# ─────────────────────────────────────────────
+# 2. CODE TOOLS
+# ─────────────────────────────────────────────
 
-            if matches:
-                st.success(f"✅ Matches found: {matches}")
+def page_code_tools():
+    st.markdown('''
+    <div class="page-banner" style="--banner-a:#7c3aed;--banner-b:#a855f7;">
+        <div class="page-banner-border"></div>
+        <div class="page-banner-content">
+            <span class="page-banner-icon">🔬</span>
+            <div class="page-banner-title">Code Tools</div>
+            <div class="page-banner-desc">Explain · Translate · Refactor · Secure · Score · Debug</div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    sec_header("Code Tools", "🔬", "#7c3aed")
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🧵 Explain", "🔁 Translate", "♻️ Refactor",
+        "🛡️ Security", "⭐ Quality", "❗ Debug Error",
+    ])
+
+    # ── Explain ──────────────────────────────────────────
+    with tab1:
+        sec_header("Code Explainer", "🧵", "#7c3aed")
+        code_in = st.text_area("Paste code:", height=200, key="explain_in")
+        uploaded = st.file_uploader("Or upload a file", type=["py","js","ts","java","cpp","go","rs","cs","rb"], key="explain_file")
+        if uploaded:
+            extra = uploaded.getvalue().decode("utf-8", errors="replace")
+            render_code(extra[:3000], language="python")
+            code_in = code_in + "\n" + extra
+        if st.button("🧠 Explain Code", key="btn_explain", type="primary"):
+            if code_in.strip():
+                with st.spinner("Analyzing…"):
+                    out = utils.build_explain_chain(llm()).invoke({"code": code_in})
+                render_llm_response(out)
             else:
-                st.warning("⚠ No matches found on the provided sample.")
-        except re.error as e:
-            st.error(f"Regex Error: {e}")
-        except Exception as e:
-            st.error(f"Unexpected Error: {e}")
+                st.warning("Paste some code first.")
 
-    # ------------------ Quick Examples ------------------
-    with st.popover("✨ Quick Examples"):
-        col1, col2, col3 = st.columns(3)
-        if col1.button("Email"):
-            st.session_state["regex_description"] = "match a standard email address"
-        if col2.button("Indian Mobile"):
-            st.session_state["regex_description"] = "match Indian mobile numbers with optional +91 and spaces or hyphens"
-        if col3.button("URL"):
-            st.session_state["regex_description"] = "match http or https URLs"
+    # ── Translate ─────────────────────────────────────────
+    with tab2:
+        sec_header("Code Translator", "🔁", "#00d4ff")
+        c1, c2 = st.columns(2)
+        src_lang = c1.selectbox("Source language", utils.LANGUAGES, key="trans_src")
+        tgt_lang = c2.selectbox("Target language", [l for l in utils.LANGUAGES if l != src_lang], key="trans_tgt")
+        code_in_t = st.text_area("Source code:", height=200, key="translate_in")
+        if st.button("🔁 Translate", key="btn_translate", type="primary"):
+            if code_in_t.strip():
+                with st.spinner(f"Translating {src_lang} → {tgt_lang}…"):
+                    result = utils.build_translate_chain(llm()).invoke({
+                        "source_lang": src_lang, "target_lang": tgt_lang, "code": code_in_t
+                    })
+                render_code(result, language=utils.LANG_HIGHLIGHT.get(tgt_lang, "python"))
+                st.download_button(
+                    "⬇️ Download translated file",
+                    result,
+                    file_name=f"translated.{utils.LANG_EXT.get(tgt_lang,'txt')}",
+                    mime="text/plain",
+                )
+            else:
+                st.warning("Paste source code first.")
 
-        if "regex_description" in st.session_state and not regex_description:
-            st.experimental_rerun()
+    # ── Refactor ──────────────────────────────────────────
+    with tab3:
+        sec_header("AI Refactor + Diff View", "♻️", "#10b981")
+        code_in_r = st.text_area("Code to refactor:", height=220, key="refactor_in")
+        if st.button("♻️ Refactor Code", key="btn_refactor", type="primary"):
+            if code_in_r.strip():
+                with st.spinner("Refactoring…"):
+                    refactored = utils.build_refactor_chain(llm()).invoke({"code": code_in_r})
+                rc1, rc2 = st.columns(2)
+                rc1.markdown("**Original**")
+                rc1.code(code_in_r, language="python")
+                rc2.markdown("**Refactored**")
+                rc2.code(refactored, language="python")
+                with st.expander("📑 Show unified diff"):
+                    diff_lines = list(__import__("difflib").unified_diff(
+                        code_in_r.splitlines(), refactored.splitlines(),
+                        fromfile="original", tofile="refactored", lineterm=""
+                    ))
+                    if diff_lines:
+                        render_code("\n".join(diff_lines), language="diff")
+                    else:
+                        st.info("No differences found.")
+                st.download_button("⬇️ Download refactored", refactored, file_name="refactored.py", mime="text/plain")
+
+    # ── Security ──────────────────────────────────────────
+    with tab4:
+        sec_header("Security Scanner", "🛡️", "#ef4444")
+        st.caption("Scans for common vulnerabilities: injection, hardcoded secrets, insecure calls, and more.")
+        code_in_s = st.text_area("Paste code to scan:", height=220, key="sec_in")
+        if st.button("🔍 Scan for Vulnerabilities", key="btn_sec", type="primary"):
+            if code_in_s.strip():
+                with st.spinner("Scanning…"):
+                    findings = utils.build_security_chain(llm()).invoke({"code": code_in_s})
+
+                # parse severity badges
+                lines = findings.strip().split("\n")
+                for line in lines:
+                    if line.strip():
+                        color = "#ef4444" if "CRITICAL" in line.upper() else \
+                                "#f97316" if "HIGH"     in line.upper() else \
+                                "#facc15" if "MEDIUM"   in line.upper() else \
+                                "#94a3b8"
+                        st.markdown(
+                            f'<div style="border-left:3px solid {color};padding:8px 12px;'
+                            f'margin:6px 0;background:{color}11;border-radius:0 8px 8px 0;">{line}</div>',
+                            unsafe_allow_html=True,
+                        )
+            else:
+                st.warning("Paste code to scan.")
+
+    # ── Quality ───────────────────────────────────────────
+    with tab5:
+        sec_header("Code Quality Score", "⭐", "#f59e0b")
+        code_in_q = st.text_area("Paste code to score:", height=220, key="qual_in")
+        if st.button("📊 Score My Code", key="btn_qual", type="primary"):
+            if code_in_q.strip():
+                with st.spinner("Evaluating…"):
+                    raw = utils.build_quality_chain(llm()).invoke({"code": code_in_q})
+                try:
+                    clean = re.sub(r"```[a-z]*", "", raw).strip().strip("`").strip()
+                    scores = json.loads(clean)
+                    overall = scores.get("overall", 5)
+                    ov_color = "#10b981" if overall >= 7 else "#f59e0b" if overall >= 4 else "#ef4444"
+
+                    m1, m2, m3, m4, m5, m6 = st.columns(6)
+                    metric_box(m1, f"{scores.get('readability',0)}/10",  "Readability",    "#00d4ff")
+                    metric_box(m2, f"{scores.get('efficiency',0)}/10",   "Efficiency",     "#7c3aed")
+                    metric_box(m3, f"{scores.get('error_handling',0)}/10","Error Handling", "#ef4444")
+                    metric_box(m4, f"{scores.get('best_practices',0)}/10","Best Practices", "#10b981")
+                    metric_box(m5, f"{scores.get('documentation',0)}/10","Docs",            "#f59e0b")
+                    metric_box(m6, f"{overall}/10", "Overall", ov_color)
+
+                    st.markdown(f"**Summary:** {scores.get('summary','')}")
+                    fig = utils.plot_quality_radar(scores)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception:
+                    render_llm_response(raw)
+            else:
+                st.warning("Paste code to score.")
+
+    # ── Debug Error ───────────────────────────────────────
+    with tab6:
+        sec_header("Error Debugger", "❗", "#f97316")
+        tb_in = st.text_area("Paste error traceback:", height=200, key="err_in")
+        if st.button("🔍 Diagnose Error", key="btn_err", type="primary"):
+            if tb_in.strip():
+                with st.spinner("Diagnosing…"):
+                    diag = utils.build_error_chain(llm()).invoke({"traceback": tb_in})
+                render_llm_response(diag)
+            else:
+                st.warning("Paste an error traceback first.")
+
+
+# ─────────────────────────────────────────────
+# 3. DEV SANDBOX
+# ─────────────────────────────────────────────
+
+def page_dev_sandbox():
+    st.markdown('''
+    <div class="page-banner" style="--banner-a:#10b981;--banner-b:#059669;">
+        <div class="page-banner-border"></div>
+        <div class="page-banner-content">
+            <span class="page-banner-icon">🖥️</span>
+            <div class="page-banner-title">Dev Sandbox</div>
+            <div class="page-banner-desc">Live Python runner · AI Fixer · Complexity Analyzer</div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    sec_header("Dev Sandbox", "🖥️", "#10b981")
+    tab1, tab2 = st.tabs(["🐍 Python Runner", "📏 Complexity Analyzer"])
+
+    # ── Python Runner ─────────────────────────────────────
+    with tab1:
+        sec_header("Live Python Sandbox", "🐍", "#10b981")
+        st.caption("Execute Python snippets safely in-app.")
+
+        default_code = "# CodeNova Sandbox\nimport math\nfor i in range(5):\n    print(f'√{i} = {math.sqrt(i):.4f}')"
+        sandbox_code = st.text_area("Python code:", value=default_code, height=200, key="sandbox_code")
+
+        col_run, col_clear = st.columns([1, 4])
+        run_clicked = col_run.button("▶ Run", type="primary", key="run_sandbox")
+        if col_clear.button("✖ Clear Output", key="clr_sandbox"):
+            if "sandbox_output" in st.session_state:
+                del st.session_state["sandbox_output"]
+
+        if run_clicked:
+            result = utils.run_python_sandbox(sandbox_code)
+            st.session_state["sandbox_output"] = result
+
+        if "sandbox_output" in st.session_state:
+            res = st.session_state["sandbox_output"]
+            st.markdown("<br>", unsafe_allow_html=True)
+            t1, t2, t3 = st.columns(3)
+            metric_box(t1, "✅ OK" if res["success"] else "❌ ERR", "Status",
+                       "#10b981" if res["success"] else "#ef4444")
+            metric_box(t2, f"{res['exec_time_ms']} ms", "Exec Time", "#00d4ff")
+            metric_box(t3, f"{len(res['output'].splitlines())} lines", "Output Lines", "#7c3aed")
+            st.markdown("<br>", unsafe_allow_html=True)
+            if res["success"]:
+                output_text = res["output"] or "(no output)"
+                # Render as styled terminal output
+                import html as _html
+                escaped = _html.escape(output_text)
+                st.markdown(
+                    f'''<div class="terminal-output">'''
+                    f'''<span class="t-prompt">▶ output</span>\n{escaped}'''
+                    f'''</div>''',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f'''<div class="terminal-output">'''
+                    f'''<span class="t-error">✖ {_html.escape(res["error"])}</span>'''
+                    f'''</div>''',
+                    unsafe_allow_html=True,
+                )
+
+        st.divider()
+        # AI Code Fixer
+        sec_header("AI Code Fixer", "🤖", "#7c3aed")
+        st.caption("Paste broken code — get a fix + explanation.")
+        broken = st.text_area("Broken code:", height=150, key="fixer_in")
+        if st.button("🔧 Fix It", key="btn_fix", type="primary"):
+            if broken.strip():
+                with st.spinner("Fixing…"):
+                    fix_prompt = (
+                        "You are an expert code debugger. Fix the broken code below. "
+                        "Structure your response EXACTLY like this:\n"
+                        "## What was wrong\n"
+                        "- bullet 1\n- bullet 2\n\n"
+                        "## Fixed Code\n"
+                        "```python\n<fixed code here>\n```\n\n"
+                        "## What changed\n"
+                        "Brief explanation of each fix.\n\n"
+                        f"Broken code:\n```\n{broken}\n```"
+                    )
+                    fixed = (llm()).invoke(fix_prompt).content
+                # Render in a styled AI response card
+                st.markdown(
+                    '<div class="ai-response-card">',
+                    unsafe_allow_html=True,
+                )
+                render_llm_response(fixed)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Complexity Analyzer ───────────────────────────────
+    with tab2:
+        sec_header("Time & Space Complexity Analyzer", "📏", "#00d4ff")
+        st.caption("AI estimates Big-O + plots the growth curve against all complexities.")
+
+        code_in = st.text_area("Paste your function:", height=200, key="complex_in")
+        if st.button("🧠 Analyze Complexity", key="btn_complex", type="primary"):
+            if code_in.strip():
+                with st.spinner("Analyzing…"):
+                    result = utils.build_complexity_chain(llm()).invoke({"code": code_in})
+
+                render_llm_response(result)
+
+                time_big_o = utils.parse_big_o(result.split("Time")[1] if "Time" in result else result)
+                space_big_o = utils.parse_big_o(result.split("Space")[1] if "Space" in result else "")
+
+                c1, c2 = st.columns(2)
+                metric_box(c1, time_big_o or "?", "Time Complexity", "#00d4ff")
+                metric_box(c2, space_big_o or "?", "Space Complexity", "#7c3aed")
+                st.markdown("")
+
+                if time_big_o:
+                    fig = utils.plot_complexity_curve(time_big_o)
+                    if fig:
+                        st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("Paste a function first.")
+
+
+# ─────────────────────────────────────────────
+# 4. API SUITE
+# ─────────────────────────────────────────────
+
+def page_api_suite():
+    st.markdown('''
+    <div class="page-banner" style="--banner-a:#00d4ff;--banner-b:#0ea5e9;">
+        <div class="page-banner-border"></div>
+        <div class="page-banner-content">
+            <span class="page-banner-icon">🌐</span>
+            <div class="page-banner-title">API Suite</div>
+            <div class="page-banner-desc">REST Tester · Profile Manager · Health Monitor</div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    sec_header("API Suite", "🌐", "#00d4ff")
+    tab1, tab2 = st.tabs(["🧪 API Tester", "📡 Health Monitor"])
+
+    # ── API Tester ────────────────────────────────────────
+    with tab1:
+        sec_header("REST API Tester", "🧪", "#00d4ff")
+        if "api_history" not in st.session_state:
+            st.session_state.api_history = []
+
+        # Profile load/save
+        profiles = st.session_state.api_profiles
+        with st.expander("📂 Saved Profiles", expanded=False):
+            if profiles:
+                sel_prof = st.selectbox("Load profile", ["— none —"] + list(profiles.keys()), key="load_prof")
+                col_load, col_del = st.columns(2)
+                if col_load.button("📥 Load", key="load_profile_btn") and sel_prof != "— none —":
+                    p = profiles[sel_prof]
+                    st.session_state["_api_url"]     = p.get("url", "")
+                    st.session_state["_api_method"]  = p.get("method", "GET")
+                    st.session_state["_api_token"]   = p.get("token", "")
+                    st.session_state["_api_headers"] = json.dumps(p.get("headers", {}), indent=2)
+                    st.session_state["_api_body"]    = json.dumps(p.get("body", {}), indent=2)
+                    st.toast(f"Loaded '{sel_prof}'")
+                if col_del.button("🗑️ Delete", key="del_profile_btn") and sel_prof != "— none —":
+                    utils.delete_api_profile(conn, sel_prof)
+                    del st.session_state.api_profiles[sel_prof]
+                    st.rerun()
+            else:
+                st.caption("No saved profiles yet.")
+
+        # Config form
+        with st.expander("🛠 Request Configuration", expanded=True):
+            api_url = st.text_input("URL", value=st.session_state.get("_api_url", ""), key="api_url_input")
+            c1, c2 = st.columns(2)
+            method  = c1.selectbox("Method", ["GET","POST","PUT","PATCH","DELETE"], key="api_method")
+            auth_token = c2.text_input("Bearer Token", value=st.session_state.get("_api_token",""), type="password", key="api_token")
+            headers_raw = st.text_area("Headers (JSON)", value=st.session_state.get("_api_headers", '{\n  "Content-Type": "application/json"\n}'), height=100, key="api_headers")
+            body_raw = ""
+            if method != "GET":
+                body_raw = st.text_area("Body (JSON)", value=st.session_state.get("_api_body","{}"), height=120, key="api_body")
+            c3, c4 = st.columns(2)
+            exp_status = c3.text_input("Expected Status", placeholder="200", key="exp_status")
+            timeout_s  = c4.number_input("Timeout (s)", value=10, min_value=1, max_value=60, key="api_timeout")
+
+        # Save profile
+        with st.expander("💾 Save as Profile"):
+            pname = st.text_input("Profile name", key="new_profile_name")
+            if st.button("💾 Save Profile") and pname:
+                try:
+                    utils.save_api_profile(conn, pname, {
+                        "url": api_url, "method": method, "token": auth_token,
+                        "headers": json.loads(headers_raw or "{}"),
+                        "body": json.loads(body_raw or "{}") if method != "GET" else {},
+                    })
+                    st.session_state.api_profiles = utils.load_api_profiles(conn)
+                    st.success(f"Saved '{pname}'")
+                except json.JSONDecodeError as e:
+                    st.error(f"Invalid JSON: {e}")
+
+        # Send
+        if st.button("🚀 Send Request", type="primary", key="send_api"):
+            try:
+                headers = json.loads(headers_raw or "{}")
+            except json.JSONDecodeError as e:
+                st.error(f"Bad headers JSON: {e}")
+                return
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+            data = None
+            if method != "GET" and body_raw.strip():
+                try:
+                    data = json.loads(body_raw)
+                except json.JSONDecodeError as e:
+                    st.error(f"Bad body JSON: {e}")
+                    return
+            try:
+                with st.spinner("Sending…"):
+                    with httpx.Client(timeout=float(timeout_s)) as client:
+                        resp = client.request(method=method, url=api_url, headers=headers, json=data)
+                status_color = "#10b981" if resp.status_code < 400 else "#ef4444"
+                st.markdown(
+                    f'<div style="display:flex;gap:10px;align-items:center;margin:8px 0;">'
+                    f'<span style="color:{status_color};font-weight:700;font-size:1.3rem;">{resp.status_code}</span>'
+                    f'<span style="color:#64748b;">{resp.elapsed.total_seconds()*1000:.0f} ms</span>'
+                    f'</div>', unsafe_allow_html=True
+                )
+                rtab1, rtab2, rtab3 = st.tabs(["📦 Response Body", "📋 Headers", "🔧 cURL"])
+                with rtab1:
+                    try:
+                        st.json(resp.json())
+                    except Exception:
+                        render_code(resp.text, language="text")
+                with rtab2:
+                    st.json(dict(resp.headers))
+                with rtab3:
+                    curl_parts = [f'curl -X {method} "{api_url}"']
+                    for k, v in headers.items():
+                        curl_parts.append(f'  -H "{k}: {v}"')
+                    if data:
+                        curl_parts.append(f"  -d '{json.dumps(data)}'")
+                    render_code(" \\\n".join(curl_parts), language="bash")
+
+                if exp_status:
+                    try:
+                        if int(exp_status) == resp.status_code:
+                            st.success("✅ Status matched expected.")
+                        else:
+                            st.error(f"❌ Expected {exp_status}, got {resp.status_code}")
+                    except ValueError:
+                        pass
+
+                st.session_state.api_history.insert(0, {
+                    "url": api_url, "method": method, "status": resp.status_code,
+                    "time_ms": round(resp.elapsed.total_seconds() * 1000),
+                    "response": resp.text[:4000],
+                })
+
+            except Exception as exc:
+                st.error(f"Request failed: {exc}")
+
+        # History
+        if st.session_state.api_history:
+            sec_header("Request History", "🗂️", "#4f46e5")
+            if st.button("🧹 Clear history"):
+                st.session_state.api_history = []
+                st.rerun()
+            for entry in st.session_state.api_history[:10]:
+                color = "#10b981" if entry["status"] < 400 else "#ef4444"
+                with st.expander(f'`{entry["method"]}` {entry["url"][:60]}  →  '
+                                 f'<span style="color:{color};">{entry["status"]}</span>  '
+                                 f'({entry["time_ms"]} ms)'):
+                    try:
+                        st.json(json.loads(entry["response"]))
+                    except Exception:
+                        render_code(entry["response"], language="text")
+            st.download_button(
+                "⬇️ Export history JSON",
+                json.dumps(st.session_state.api_history, indent=2),
+                file_name="api_history.json", mime="application/json",
+            )
+
+    # ── Health Monitor ────────────────────────────────────
+    with tab2:
+        sec_header("API Health Monitor", "📡", "#10b981")
+        with st.expander("➕ Add endpoint to monitor", expanded=True):
+            mc1, mc2, mc3 = st.columns([3, 1, 1])
+            mon_name = mc1.text_input("Name", placeholder="My API", key="mon_name")
+            mon_url  = mc1.text_input("URL",  placeholder="https://api.example.com/health", key="mon_url")
+            mon_method = mc2.selectbox("Method", ["GET","POST"], key="mon_method")
+            if mc3.button("🔁 Check Now", type="primary", key="btn_monitor"):
+                if mon_name and mon_url:
+                    with st.spinner("Pinging…"):
+                        result = utils.monitor_api(mon_name, mon_url, mon_method)
+                    st.session_state.monitor_history.insert(0, result)
+
+        for res in st.session_state.monitor_history[:10]:
+            color = "#10b981" if res["ok"] else "#ef4444"
+            icon  = "✅" if res["ok"] else "❌"
+            st.markdown(
+                f'<div class="glass" style="border-left:3px solid {color};">'
+                f'<b>{icon} {res["name"]}</b> &nbsp;|&nbsp; '
+                f'<code>{res["method"]} {res["url"]}</code><br>'
+                f'Status: <span style="color:{color};">{res["status_code"] or "ERR"}</span> &nbsp;|&nbsp; '
+                f'Response time: <b>{res["response_time_ms"] or "—"} ms</b> &nbsp;|&nbsp; '
+                f'<span style="color:#64748b;">{res["timestamp"]}</span>'
+                + ('' if res['ok'] else f'<br><span style="color:#ef4444;">{res["error"]}</span>')
+                + '</div>',
+                unsafe_allow_html=True,
+            )
+
+        if not st.session_state.monitor_history:
+            st.info("Add an endpoint and click **Check Now** to start monitoring.")
+
+
+# ─────────────────────────────────────────────
+# 5. GENERATORS
+# ─────────────────────────────────────────────
+
+def page_generators():
+    st.markdown('''
+    <div class="page-banner" style="--banner-a:#f59e0b;--banner-b:#ef4444;">
+        <div class="page-banner-border"></div>
+        <div class="page-banner-content">
+            <span class="page-banner-icon">⚙️</span>
+            <div class="page-banner-title">Generators</div>
+            <div class="page-banner-desc">Unit Tests · Regex · SQL · Dockerfile · Git Commits · Changelog</div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    sec_header("Generators", "⚙️", "#f59e0b")
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🧪 Unit Tests", "🧩 Regex", "🗄️ SQL Builder",
+        "🐳 Dockerfile", "📝 Git Commit", "📋 Changelog",
+    ])
+
+    # ── Unit Tests ────────────────────────────────────────
+    with tab1:
+        sec_header("Unit Test Generator", "🧪", "#f59e0b")
+        lang = st.selectbox("Language / Framework", utils.LANGUAGES, key="ut_lang")
+        func_code = st.text_area("Paste function / component:", height=200, key="ut_code")
+        if st.button("🧪 Generate Tests", type="primary", key="btn_ut"):
+            if func_code.strip():
+                with st.spinner("Writing tests…"):
+                    tests = utils.build_unit_test_chain(llm(), lang).invoke({"func": func_code})
+                render_code(tests, language=utils.LANG_HIGHLIGHT.get(lang, "python"))
+                st.download_button(
+                    "⬇️ Download test file",
+                    tests, file_name=f"test.{utils.LANG_EXT.get(lang,'txt')}",
+                    mime="text/plain",
+                )
+            else:
+                st.warning("Paste a function first.")
+
+    # ── Regex ─────────────────────────────────────────────
+    with tab2:
+        sec_header("Regex Generator & Tester", "🧩", "#00d4ff")
+        with st.popover("✨ Quick examples"):
+            qc1, qc2, qc3 = st.columns(3)
+            if qc1.button("Email"):         st.session_state["rx_desc"] = "match a standard email address"
+            if qc2.button("Indian mobile"): st.session_state["rx_desc"] = "match Indian mobile numbers with optional +91"
+            if qc3.button("URL"):           st.session_state["rx_desc"] = "match http or https URLs"
+
+        rx_desc   = st.text_area("Describe the pattern:", value=st.session_state.get("rx_desc",""), key="rx_desc_area", height=80)
+        rx_sample = st.text_area("Sample text to test (optional):", height=100, key="rx_sample")
+
+        if st.button("🧠 Generate Regex", type="primary", key="btn_regex"):
+            if rx_desc.strip():
+                with st.spinner("Generating…"):
+                    raw = llm().invoke(
+                        "Return ONLY a Python regular-expression pattern, no description, no fences:\n" + rx_desc
+                    ).content
+                    pattern = utils.clean_regex_pattern(raw)
+                if pattern:
+                    st.session_state["rx_pattern"] = pattern
+                    render_code(pattern, language="text")
+                    with st.spinner("Explaining…"):
+                        explain = utils.build_regex_explain_chain(llm()).invoke({"pattern": pattern})
+                    st.markdown(f"**Explanation:** {explain}")
+
+        if rx_sample.strip() and "rx_pattern" in st.session_state:
+            try:
+                pat = re.compile(st.session_state["rx_pattern"])
+                matches = pat.findall(rx_sample)
+                if matches:
+                    st.success(f"✅ {len(matches)} match(es): `{matches}`")
+                    highlighted = pat.sub(lambda m: f"**{m.group()}**", rx_sample)
+                    st.markdown("**Highlighted:** " + highlighted)
+                else:
+                    st.warning("No matches in sample text.")
+            except re.error as e:
+                st.error(f"Regex error: {e}")
+
+    # ── SQL Builder ───────────────────────────────────────
+    with tab3:
+        sec_header("SQL Query Builder", "🗄️", "#7c3aed")
+        st.caption("Natural language → optimized SQL query")
+        schema = st.text_area("Table schema (optional):", placeholder="users(id, name, email, created_at)\norders(id, user_id, amount, status)", height=100, key="sql_schema")
+        nl_query = st.text_area("Your query in plain English:", placeholder="Find all users who placed more than 3 orders in the last 30 days", height=100, key="sql_query")
+        if st.button("🗄️ Generate SQL", type="primary", key="btn_sql"):
+            if nl_query.strip():
+                with st.spinner("Generating SQL…"):
+                    sql_out = utils.build_sql_chain(llm()).invoke({"schema": schema, "query": nl_query})
+                render_code(sql_out, language="sql")
+                st.download_button("⬇️ Download .sql", sql_out, file_name="query.sql", mime="text/plain")
+
+    # ── Dockerfile ────────────────────────────────────────
+    with tab4:
+        sec_header("Dockerfile Generator", "🐳", "#0ea5e9")
+        st.caption("Describe your project and get a production-ready Dockerfile.")
+        docker_desc = st.text_area(
+            "Project description:",
+            placeholder="A Python 3.11 FastAPI REST API with PostgreSQL, Redis, and Celery workers. The app runs on port 8000.",
+            height=140, key="docker_desc"
+        )
+        if st.button("🐳 Generate Dockerfile", type="primary", key="btn_docker"):
+            if docker_desc.strip():
+                with st.spinner("Generating Dockerfile…"):
+                    dockerfile = utils.build_docker_chain(llm()).invoke({"description": docker_desc})
+                render_code(dockerfile, language="docker")
+                st.download_button("⬇️ Download Dockerfile", dockerfile, file_name="Dockerfile", mime="text/plain")
+
+    # ── Git Commit ────────────────────────────────────────
+    with tab5:
+        sec_header("Git Commit Message Generator", "📝", "#10b981")
+        st.caption("Paste a git diff or describe changes → get a conventional commit message.")
+        diff_in = st.text_area("Git diff or change description:", height=200, key="commit_diff",
+                               placeholder="feat: added user authentication\nChanged auth.py to use JWT tokens\nRemoved session-based auth")
+        if st.button("📝 Generate Commit Message", type="primary", key="btn_commit"):
+            if diff_in.strip():
+                with st.spinner("Writing commit message…"):
+                    commit_msg = utils.build_git_commit_chain(llm()).invoke({"diff": diff_in})
+                render_code(commit_msg, language="text")
+                st.download_button("⬇️ Copy as .txt", commit_msg, file_name="commit_msg.txt", mime="text/plain")
+
+    # ── Changelog ─────────────────────────────────────────
+    with tab6:
+        sec_header("Changelog Generator", "📋", "#a855f7")
+        st.caption("List your changes → get a formatted Keep-a-Changelog entry.")
+        changes_in = st.text_area("List of changes:", height=160, key="changelog_in",
+                                  placeholder="- Added OAuth2 login\n- Fixed null pointer in /api/users\n- Removed legacy XML parser\n- Updated dependencies")
+        version = st.text_input("Version (optional):", placeholder="1.4.2", key="cl_version")
+        if st.button("📋 Generate Changelog", type="primary", key="btn_cl"):
+            if changes_in.strip():
+                full_input = (f"Version: {version}\n\n" if version else "") + changes_in
+                with st.spinner("Generating changelog…"):
+                    cl_out = utils.build_changelog_chain(llm()).invoke({"changes": full_input})
+                render_llm_response(cl_out)
+                st.download_button("⬇️ Download CHANGELOG.md", cl_out, file_name="CHANGELOG.md", mime="text/plain")
+
+
+# ─────────────────────────────────────────────
+# 6. SNIPPETS
+# ─────────────────────────────────────────────
+
+def page_snippets():
+    st.markdown('''
+    <div class="page-banner" style="--banner-a:#a855f7;--banner-b:#7c3aed;">
+        <div class="page-banner-border"></div>
+        <div class="page-banner-content">
+            <span class="page-banner-icon">📚</span>
+            <div class="page-banner-title">Snippet Library</div>
+            <div class="page-banner-desc">Save · Tag · Search · Reuse — backed by SQLite</div>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+    sec_header("Snippet Library", "📚", "#a855f7")
+    st.caption("Save, tag, and reuse code snippets across sessions. Stored persistently in SQLite.")
+
+    # Save new snippet
+    with st.expander("➕ Save New Snippet", expanded=False):
+        sn_name = st.text_input("Name:", key="sn_name", placeholder="Binary search function")
+        sn_lang = st.selectbox("Language:", utils.LANGUAGES, key="sn_lang")
+        sn_tags = st.text_input("Tags (comma-separated):", key="sn_tags", placeholder="algorithms, search")
+        sn_code = st.text_area("Code:", height=180, key="sn_code")
+        if st.button("💾 Save Snippet", type="primary", key="btn_save_snip"):
+            if sn_name.strip() and sn_code.strip():
+                utils.save_snippet(conn, sn_name.strip(), sn_lang, sn_code.strip(), sn_tags.strip())
+                st.success(f"Saved '{sn_name}'!")
+                st.rerun()
+            else:
+                st.warning("Name and code are required.")
+
+    # Search
+    search = st.text_input("🔍 Search snippets:", key="snip_search", placeholder="Search by name or tag…")
+    snippets = utils.load_snippets(conn)
+
+    if search:
+        q = search.lower()
+        snippets = [s for s in snippets if q in s[1].lower() or q in (s[4] or "").lower()]
+
+    if not snippets:
+        st.info("No snippets yet. Save your first one above!")
+        return
+
+    st.markdown(f"**{len(snippets)} snippet(s)** found")
+
+    for snip_id, name, lang, code, tags, created_at in snippets:
+        with st.expander(f"📄 {name}  `{lang}`  — {created_at[:10]}"):
+            if tags:
+                tag_html = " ".join(
+                    f'<span style="background:#1e2d4a;color:#94a3b8;border-radius:99px;'
+                    f'padding:2px 10px;font-size:.75rem;margin-right:4px;">#{t.strip()}</span>'
+                    for t in tags.split(",") if t.strip()
+                )
+                st.markdown(tag_html, unsafe_allow_html=True)
+            render_code(code, language=utils.LANG_HIGHLIGHT.get(lang, "python"))
+
+            col_dl, col_del, _ = st.columns([1, 1, 4])
+            col_dl.download_button(
+                "⬇️ Download",
+                code,
+                file_name=f"{name.replace(' ','_')}.{utils.LANG_EXT.get(lang,'txt')}",
+                mime="text/plain",
+                key=f"dl_{snip_id}",
+            )
+            if col_del.button("🗑️ Delete", key=f"del_{snip_id}"):
+                utils.delete_snippet(conn, snip_id)
+                st.rerun()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ROUTER
+# ═════════════════════════════════════════════════════════════════════════════
+_ROUTES = {
+    "💬 AI Chat":    page_chat,
+    "🔬 Code Tools": page_code_tools,
+    "🖥️ Dev Sandbox": page_dev_sandbox,
+    "🌐 API Suite":  page_api_suite,
+    "⚙️ Generators": page_generators,
+    "📚 Snippets":   page_snippets,
+}
+
+# Guard: check API key
+if not utils.API_KEY:
+    st.error(
+        "⚠️ **GROQ_API_KEY not found.** Create a `.env` file with:\n"
+        "```\nGROQ_API_KEY=your_key_here\n```\n"
+        "Get a free key at https://console.groq.com"
+    )
+    st.stop()
+
+# Render selected page
+page_fn = _ROUTES.get(st.session_state.page, page_chat)
+page_fn()
