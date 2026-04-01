@@ -1,7 +1,7 @@
 """
 CodeNova — main.py
 AI-powered developer suite.  Run with: streamlit run main.py
-Requires: utils.py  |  .env with GROQ_API_KEY=...
+Requires: a running FastAPI backend via `uvicorn api:app --reload`
 """
 
 # ── stdlib ────────────────────────────────────────────────────────────────────
@@ -10,15 +10,13 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime
-from io import BytesIO
+from urllib.parse import quote
 
 # ── third-party ───────────────────────────────────────────────────────────────
 import streamlit as st
 import httpx
-
-# ── local ─────────────────────────────────────────────────────────────────────
-import utils
+import plotly.graph_objects as go
+from dotenv import load_dotenv
 
 # ═════════════════════════════════════════════════════════════════════════════
 # PAGE CONFIG  (must be the very first Streamlit call)
@@ -984,12 +982,180 @@ def render_llm_response(text: str) -> None:
         st.markdown(tail)
 
 
-@st.cache_resource
-def _get_db():
-    return utils.init_db()
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+load_dotenv(ENV_PATH if os.path.exists(ENV_PATH) else None)
+load_dotenv()
+
+FALLBACK_MODEL_MAP = {
+    "⚡ LLaMA 3.1 8B  (Fast)": "llama-3.1-8b-instant",
+    "🧠 LLaMA 3.3 70B (Smart)": "llama-3.3-70b-versatile",
+    "🔬 Command R+    (Advanced)": "command-r-plus",
+}
+FALLBACK_LANGUAGES = [
+    "Python", "Java", "JavaScript", "TypeScript",
+    "C++", "Go", "Rust", "C#", "Ruby", "PHP",
+    "Swift", "Kotlin", "React", "Next.js", "Node.js",
+]
+FALLBACK_LANG_EXT = {
+    "Python": "py", "Java": "java", "JavaScript": "js",
+    "TypeScript": "ts", "C++": "cpp", "Go": "go",
+    "Rust": "rs", "C#": "cs", "Ruby": "rb",
+    "PHP": "php", "Swift": "swift", "Kotlin": "kt",
+    "React": "jsx", "Next.js": "js", "Node.js": "js",
+}
+FALLBACK_LANG_HIGHLIGHT = {
+    "Python": "python", "Java": "java", "JavaScript": "javascript",
+    "TypeScript": "typescript", "C++": "cpp", "Go": "go",
+    "Rust": "rust", "C#": "csharp", "Ruby": "ruby",
+    "PHP": "php", "Swift": "swift", "Kotlin": "kotlin",
+    "React": "jsx", "Next.js": "javascript", "Node.js": "javascript",
+}
+FALLBACK_DEFAULT_MODEL = (
+    list(FALLBACK_MODEL_MAP.keys())[1]
+    if len(FALLBACK_MODEL_MAP) > 1
+    else next(iter(FALLBACK_MODEL_MAP))
+)
+
+API_BASE_URL = os.getenv("CODENOVA_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+API_TIMEOUT = float(os.getenv("CODENOVA_API_TIMEOUT", "120"))
+API_RETRIES = max(0, int(os.getenv("CODENOVA_API_RETRIES", "2")))
+API_RETRY_BACKOFF = max(0.0, float(os.getenv("CODENOVA_API_RETRY_BACKOFF", "0.8")))
+HEALTH_POLL_INTERVAL_MS = max(0, int(os.getenv("CODENOVA_HEALTH_POLL_MS", "30000")))
+HEALTH_AUTO_POLL = os.getenv("CODENOVA_HEALTH_AUTO_POLL", "true").strip().lower() in {
+    "1", "true", "yes", "on",
+}
 
 
-conn = _get_db()
+def _api_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return response.text.strip() or f"HTTP {response.status_code}"
+
+    detail = payload.get("detail", payload)
+    if isinstance(detail, dict):
+        return detail.get("message") or json.dumps(detail)
+    if isinstance(detail, list):
+        return "; ".join(str(item) for item in detail)
+    return str(detail)
+
+
+def api_request(
+    method: str,
+    path: str,
+    *,
+    payload: dict | None = None,
+    params: dict | None = None,
+    timeout: float | None = None,
+    response_type: str = "json",
+):
+    url = f"{API_BASE_URL}{path}"
+    last_error = None
+
+    for attempt in range(API_RETRIES + 1):
+        try:
+            with httpx.Client(timeout=timeout or API_TIMEOUT) as client:
+                response = client.request(method, url, json=payload, params=params)
+            if response.status_code >= 500 and attempt < API_RETRIES:
+                time.sleep(API_RETRY_BACKOFF * (attempt + 1))
+                continue
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code >= 500 and attempt < API_RETRIES:
+                last_error = _api_error_message(exc.response)
+                time.sleep(API_RETRY_BACKOFF * (attempt + 1))
+                continue
+            raise RuntimeError(_api_error_message(exc.response)) from exc
+        except httpx.HTTPError as exc:
+            last_error = str(exc)
+            if attempt < API_RETRIES:
+                time.sleep(API_RETRY_BACKOFF * (attempt + 1))
+                continue
+            raise RuntimeError(
+                f"FastAPI backend is unavailable at {API_BASE_URL} after {API_RETRIES + 1} attempt(s). {exc}"
+            ) from exc
+        else:
+            break
+    else:
+        raise RuntimeError(
+            f"FastAPI backend is unavailable at {API_BASE_URL} after {API_RETRIES + 1} attempt(s). {last_error or 'Unknown error.'}"
+        )
+
+    if response_type == "bytes":
+        return response.content
+    return response.json()
+
+
+@st.cache_data(show_spinner=False, ttl=60)
+def fetch_api_meta():
+    return api_request("GET", "/meta")
+
+
+@st.cache_data(show_spinner=False, ttl=15)
+def fetch_backend_health():
+    return api_request("GET", "/health")
+
+
+def load_chat_history(session_id: str) -> list[dict]:
+    return api_request("GET", f"/sessions/{session_id}/history")["history"]
+
+
+def load_api_profiles() -> dict:
+    return api_request("GET", "/api-profiles")["profiles"]
+
+
+def build_chart_figure(chart_payload: dict | None):
+    return go.Figure(chart_payload) if chart_payload else None
+
+
+def refresh_backend_cache() -> None:
+    fetch_api_meta.clear()
+    fetch_backend_health.clear()
+
+
+def bootstrap_backend() -> tuple[dict, dict, bool, str | None]:
+    api_meta = {
+        "models": FALLBACK_MODEL_MAP,
+        "languages": FALLBACK_LANGUAGES,
+        "language_extensions": FALLBACK_LANG_EXT,
+        "language_highlights": FALLBACK_LANG_HIGHLIGHT,
+        "default_model": FALLBACK_DEFAULT_MODEL,
+    }
+    backend_health = {
+        "status": "offline",
+        "groq_api_key_configured": False,
+        "models": FALLBACK_MODEL_MAP,
+        "languages": FALLBACK_LANGUAGES,
+        "db_path": "unavailable",
+    }
+    error_message = None
+    meta_ok = False
+    health_ok = False
+
+    try:
+        api_meta = fetch_api_meta()
+        meta_ok = True
+    except RuntimeError as exc:
+        error_message = str(exc)
+
+    try:
+        backend_health = fetch_backend_health()
+        health_ok = True
+    except RuntimeError as exc:
+        error_message = error_message or str(exc)
+
+    return api_meta, backend_health, meta_ok and health_ok, error_message
+
+
+API_META, BACKEND_HEALTH, BACKEND_ONLINE, BACKEND_ERROR = bootstrap_backend()
+BACKEND_CHECKED_AT = time.strftime("%H:%M:%S")
+
+MODEL_MAP = API_META.get("models", FALLBACK_MODEL_MAP)
+LANGUAGES = API_META.get("languages", FALLBACK_LANGUAGES)
+LANG_EXT = API_META.get("language_extensions", FALLBACK_LANG_EXT)
+LANG_HIGHLIGHT = API_META.get("language_highlights", FALLBACK_LANG_HIGHLIGHT)
+DEFAULT_MODEL = API_META.get("default_model", FALLBACK_DEFAULT_MODEL)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -998,22 +1164,153 @@ conn = _get_db()
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 if "history" not in st.session_state:
-    st.session_state.history = utils.load_chat_history(conn, st.session_state.session_id)
-if "selected_model" not in st.session_state:
-    st.session_state.selected_model = list(utils.GROQ_MODELS.keys())[1]
+    try:
+        st.session_state.history = load_chat_history(st.session_state.session_id)
+    except RuntimeError:
+        st.session_state.history = []
+if "selected_model" not in st.session_state or st.session_state.selected_model not in MODEL_MAP:
+    st.session_state.selected_model = DEFAULT_MODEL
 if "page" not in st.session_state:
     st.session_state.page = "💬 AI Chat"
 if "api_history" not in st.session_state:
     st.session_state.api_history = []
 if "api_profiles" not in st.session_state:
-    st.session_state.api_profiles = utils.load_api_profiles(conn)
+    try:
+        st.session_state.api_profiles = load_api_profiles()
+    except RuntimeError:
+        st.session_state.api_profiles = {}
 if "monitor_history" not in st.session_state:
     st.session_state.monitor_history = []
+if "backend_notice" not in st.session_state:
+    st.session_state.backend_notice = ""
 
 
-def llm():
-    """Always returns a fresh LLM matching the currently selected model."""
-    return utils.get_llm(st.session_state.selected_model)
+def request_backend_reconnect() -> None:
+    st.session_state.backend_reconnect_requested = True
+    refresh_backend_cache()
+    st.rerun()
+
+
+def sync_backend_runtime_state() -> list[str]:
+    errors: list[str] = []
+
+    try:
+        st.session_state.history = load_chat_history(st.session_state.session_id)
+    except RuntimeError as exc:
+        errors.append(f"history: {exc}")
+
+    try:
+        st.session_state.api_profiles = load_api_profiles()
+    except RuntimeError as exc:
+        errors.append(f"profiles: {exc}")
+
+    return errors
+
+
+def schedule_backend_poll() -> None:
+    if BACKEND_ONLINE or not HEALTH_AUTO_POLL or HEALTH_POLL_INTERVAL_MS <= 0:
+        return
+
+    _components.html(
+        f"""
+        <script>
+        window.setTimeout(function () {{
+            try {{
+                if (window.parent && window.parent.location) {{
+                    window.parent.location.reload();
+                }} else {{
+                    window.location.reload();
+                }}
+            }} catch (err) {{
+                window.location.reload();
+            }}
+        }}, {HEALTH_POLL_INTERVAL_MS});
+        </script>
+        """,
+        height=0,
+    )
+
+
+previous_backend_online = st.session_state.get("backend_online")
+backend_reconnect_requested = st.session_state.get("backend_reconnect_requested", False)
+backend_recovered = previous_backend_online is False and BACKEND_ONLINE
+st.session_state.backend_online = BACKEND_ONLINE
+
+if BACKEND_ONLINE and (backend_recovered or backend_reconnect_requested):
+    sync_errors = sync_backend_runtime_state()
+    if sync_errors:
+        st.session_state.backend_notice = "Reconnect partially succeeded: " + " | ".join(sync_errors)
+    else:
+        st.session_state.backend_notice = "Backend reconnected and session data refreshed."
+        st.session_state.backend_reconnect_requested = False
+
+
+def render_backend_status_panel() -> None:
+    status_color = "#10b981" if BACKEND_ONLINE else "#ef4444"
+    status_label = "ONLINE" if BACKEND_ONLINE else "OFFLINE"
+    groq_color = "#10b981" if BACKEND_HEALTH.get("groq_api_key_configured", False) else "#f59e0b"
+    groq_label = "READY" if BACKEND_HEALTH.get("groq_api_key_configured", False) else "MISSING"
+    poll_label = (
+        f"every {max(1, HEALTH_POLL_INTERVAL_MS // 1000)}s"
+        if HEALTH_AUTO_POLL and HEALTH_POLL_INTERVAL_MS > 0
+        else "off"
+    )
+    st.markdown(
+        f'''<div style="
+            margin-top:8px;padding:12px;
+            background:rgba(255,255,255,.03);
+            border:1px solid rgba(255,255,255,.08);
+            border-radius:10px;
+        ">
+            <div style="font-family:Space Mono,monospace;font-size:.6rem;color:#1e3a4a;letter-spacing:.18em;margin-bottom:8px;">BACKEND STATUS</div>
+            <div style="display:flex;justify-content:space-between;gap:12px;font-family:Space Mono,monospace;font-size:.68rem;">
+                <span>api: <span style="color:{status_color};">{status_label}</span></span>
+                <span>groq: <span style="color:{groq_color};">{groq_label}</span></span>
+            </div>
+            <div style="font-family:Space Mono,monospace;font-size:.65rem;margin-top:6px;color:#64748b;">retries: {API_RETRIES + 1} attempts</div>
+            <div style="font-family:Space Mono,monospace;font-size:.65rem;margin-top:3px;color:#64748b;">poll: {poll_label}</div>
+            <div style="font-family:Space Mono,monospace;font-size:.65rem;margin-top:3px;color:#64748b;">url: {API_BASE_URL}</div>
+            <div style="font-family:Space Mono,monospace;font-size:.65rem;margin-top:3px;color:#64748b;">checked: {BACKEND_CHECKED_AT}</div>
+        </div>''',
+        unsafe_allow_html=True,
+    )
+    refresh_col, reconnect_col = st.columns(2)
+    if refresh_col.button("↻ Refresh", key="backend_refresh", use_container_width=True):
+        refresh_backend_cache()
+        st.rerun()
+    if reconnect_col.button("⟳ Reconnect", key="backend_retry_load", use_container_width=True):
+        request_backend_reconnect()
+    if st.session_state.backend_notice:
+        st.caption(st.session_state.backend_notice)
+        st.session_state.backend_notice = ""
+    if not BACKEND_ONLINE:
+        st.caption("Set `CODENOVA_API_BASE_URL` in `.env` if FastAPI runs on a different host or port.")
+
+
+def render_backend_banner() -> None:
+    if BACKEND_ONLINE:
+        return
+
+    st.markdown(
+        f'''<div class="glass" style="border-left:3px solid #ef4444;">
+            <b>Backend offline.</b> Streamlit loaded with fallback metadata, but API-powered actions will fail until FastAPI is reachable.<br>
+            <span style="color:#94a3b8;">Configured URL:</span> <code>{API_BASE_URL}</code><br>
+            <span style="color:#94a3b8;">Last error:</span> {BACKEND_ERROR or "Unavailable"}
+        </div>''',
+        unsafe_allow_html=True,
+    )
+    left, right = st.columns([1, 2])
+    if left.button("Reconnect Backend", key="retry_backend_banner", use_container_width=True):
+        request_backend_reconnect()
+    right.code(
+        "uvicorn api:app --reload\n"
+        "CODENOVA_API_BASE_URL=http://127.0.0.1:8000",
+        language="bash",
+    )
+    if HEALTH_AUTO_POLL and HEALTH_POLL_INTERVAL_MS > 0:
+        st.caption(
+            f"Auto-retrying backend health every {max(1, HEALTH_POLL_INTERVAL_MS // 1000)} seconds."
+        )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1068,15 +1365,18 @@ with st.sidebar:
 
     # ── Model selector ──
     st.markdown('<div style="font-family:Space Mono,monospace;font-size:.6rem;color:#1e3a4a;letter-spacing:.22em;text-transform:uppercase;margin:4px 0 8px;padding-left:4px;">LLM Model</div>', unsafe_allow_html=True)
+    model_labels = list(MODEL_MAP.keys())
     model_choice = st.selectbox(
-        "Model", list(utils.GROQ_MODELS.keys()),
-        index=list(utils.GROQ_MODELS.keys()).index(st.session_state.selected_model),
+        "Model", model_labels,
+        index=model_labels.index(st.session_state.selected_model),
         label_visibility="collapsed",
     )
     if model_choice != st.session_state.selected_model:
         st.session_state.selected_model = model_choice
         st.rerun()
-    st.caption(f"ID: `{utils.GROQ_MODELS[st.session_state.selected_model]}`")
+    st.caption(f"ID: `{MODEL_MAP[st.session_state.selected_model]}`")
+    st.caption(f"Backend: `{API_BASE_URL}`")
+    render_backend_status_panel()
 
     st.divider()
 
@@ -1091,21 +1391,31 @@ with st.sidebar:
             st.rerun()
 
         if st.button("🧼 Clear History", use_container_width=True):
-            utils.clear_chat_history(conn, st.session_state.session_id)
-            st.session_state.history = []
-            st.rerun()
+            try:
+                api_request("DELETE", f"/sessions/{st.session_state.session_id}")
+            except RuntimeError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.history = []
+                st.rerun()
 
         if st.button("📄 Export PDF", use_container_width=True):
             if st.session_state.history:
-                pdf_buf = utils.export_chat_pdf(
-                    st.session_state.history, st.session_state.session_id
-                )
-                st.download_button(
-                    "⬇️ Download PDF", pdf_buf,
-                    file_name=f"codenova_{st.session_state.session_id}.pdf",
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
+                try:
+                    pdf_bytes = api_request(
+                        "GET",
+                        f"/sessions/{st.session_state.session_id}/export.pdf",
+                        response_type="bytes",
+                    )
+                except RuntimeError as exc:
+                    st.error(str(exc))
+                else:
+                    st.download_button(
+                        "⬇️ Download PDF", pdf_bytes,
+                        file_name=f"codenova_{st.session_state.session_id}.pdf",
+                        mime="application/pdf",
+                        use_container_width=True,
+                    )
             else:
                 st.warning("No messages yet.")
 
@@ -1190,30 +1500,46 @@ def page_chat():
     prompt_text = voice_text if (voice_text if "voice_text" in dir() else None) else user_input
 
     if prompt_text:
-        st.session_state.history.append({"role": "user", "content": prompt_text})
-        utils.save_chat_message(conn, st.session_state.session_id, "user", prompt_text, st.session_state.selected_model)
         with st.chat_message("user"):
             st.markdown(prompt_text)
 
         with st.chat_message("assistant"):
-            with st.spinner("Thinking…"):
-                chain  = utils.build_chat_chain(llm())
-                answer = chain.invoke({"question": prompt_text})
-            render_llm_response(answer)
-            # subtle label badge
-            st.markdown(
-                f'<span class="badge badge-cyan">'
-                f'⚡ {st.session_state.selected_model.split()[1]} {st.session_state.selected_model.split()[0]}</span>',
-                unsafe_allow_html=True,
-            )
+            try:
+                with st.spinner("Thinking…"):
+                    result = api_request(
+                        "POST",
+                        "/chat",
+                        payload={
+                            "session_id": st.session_state.session_id,
+                            "message": prompt_text,
+                            "model_name": st.session_state.selected_model,
+                        },
+                        timeout=180,
+                    )
+                    answer = result["answer"]
+                render_llm_response(answer)
+                st.markdown(
+                    f'<span class="badge badge-cyan">'
+                    f'⚡ {st.session_state.selected_model.split()[1]} {st.session_state.selected_model.split()[0]}</span>',
+                    unsafe_allow_html=True,
+                )
+                try:
+                    tts_buf = api_request(
+                        "POST",
+                        "/tts",
+                        payload={"text": answer},
+                        timeout=180,
+                        response_type="bytes",
+                    )
+                except RuntimeError:
+                    tts_buf = None
+                if tts_buf:
+                    st.audio(tts_buf, format="audio/mp3")
+            except RuntimeError as exc:
+                st.error(str(exc))
+                return
 
-            # optional TTS
-            tts_buf = utils.text_to_speech(answer)
-            if tts_buf:
-                st.audio(tts_buf, format="audio/mp3")
-
-        st.session_state.history.append({"role": "assistant", "content": answer})
-        utils.save_chat_message(conn, st.session_state.session_id, "assistant", answer, st.session_state.selected_model)
+        st.session_state.history = result.get("history", st.session_state.history)
 
 
 # ─────────────────────────────────────────────
@@ -1248,9 +1574,17 @@ def page_code_tools():
             code_in = code_in + "\n" + extra
         if st.button("🧠 Explain Code", key="btn_explain", type="primary"):
             if code_in.strip():
-                with st.spinner("Analyzing…"):
-                    out = utils.build_explain_chain(llm()).invoke({"code": code_in})
-                render_llm_response(out)
+                try:
+                    with st.spinner("Analyzing…"):
+                        out = api_request(
+                            "POST",
+                            "/tools/explain",
+                            payload={"code": code_in, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )["explanation"]
+                    render_llm_response(out)
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Paste some code first.")
 
@@ -1258,22 +1592,34 @@ def page_code_tools():
     with tab2:
         sec_header("Code Translator", "🔁", "#00d4ff")
         c1, c2 = st.columns(2)
-        src_lang = c1.selectbox("Source language", utils.LANGUAGES, key="trans_src")
-        tgt_lang = c2.selectbox("Target language", [l for l in utils.LANGUAGES if l != src_lang], key="trans_tgt")
+        src_lang = c1.selectbox("Source language", LANGUAGES, key="trans_src")
+        tgt_lang = c2.selectbox("Target language", [l for l in LANGUAGES if l != src_lang], key="trans_tgt")
         code_in_t = st.text_area("Source code:", height=200, key="translate_in")
         if st.button("🔁 Translate", key="btn_translate", type="primary"):
             if code_in_t.strip():
-                with st.spinner(f"Translating {src_lang} → {tgt_lang}…"):
-                    result = utils.build_translate_chain(llm()).invoke({
-                        "source_lang": src_lang, "target_lang": tgt_lang, "code": code_in_t
-                    })
-                render_code(result, language=utils.LANG_HIGHLIGHT.get(tgt_lang, "python"))
-                st.download_button(
-                    "⬇️ Download translated file",
-                    result,
-                    file_name=f"translated.{utils.LANG_EXT.get(tgt_lang,'txt')}",
-                    mime="text/plain",
-                )
+                try:
+                    with st.spinner(f"Translating {src_lang} → {tgt_lang}…"):
+                        result = api_request(
+                            "POST",
+                            "/tools/translate",
+                            payload={
+                                "source_lang": src_lang,
+                                "target_lang": tgt_lang,
+                                "code": code_in_t,
+                                "model_name": st.session_state.selected_model,
+                            },
+                            timeout=180,
+                        )
+                    translated_code = result["translated_code"]
+                    render_code(translated_code, language=result.get("highlight", "python"))
+                    st.download_button(
+                        "⬇️ Download translated file",
+                        translated_code,
+                        file_name=f"translated.{result.get('extension', 'txt')}",
+                        mime="text/plain",
+                    )
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Paste source code first.")
 
@@ -1283,23 +1629,29 @@ def page_code_tools():
         code_in_r = st.text_area("Code to refactor:", height=220, key="refactor_in")
         if st.button("♻️ Refactor Code", key="btn_refactor", type="primary"):
             if code_in_r.strip():
-                with st.spinner("Refactoring…"):
-                    refactored = utils.build_refactor_chain(llm()).invoke({"code": code_in_r})
-                rc1, rc2 = st.columns(2)
-                rc1.markdown("**Original**")
-                rc1.code(code_in_r, language="python")
-                rc2.markdown("**Refactored**")
-                rc2.code(refactored, language="python")
-                with st.expander("📑 Show unified diff"):
-                    diff_lines = list(__import__("difflib").unified_diff(
-                        code_in_r.splitlines(), refactored.splitlines(),
-                        fromfile="original", tofile="refactored", lineterm=""
-                    ))
-                    if diff_lines:
-                        render_code("\n".join(diff_lines), language="diff")
-                    else:
-                        st.info("No differences found.")
-                st.download_button("⬇️ Download refactored", refactored, file_name="refactored.py", mime="text/plain")
+                try:
+                    with st.spinner("Refactoring…"):
+                        result = api_request(
+                            "POST",
+                            "/tools/refactor",
+                            payload={"code": code_in_r, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )
+                    refactored = result["refactored_code"]
+                    rc1, rc2 = st.columns(2)
+                    rc1.markdown("**Original**")
+                    rc1.code(code_in_r, language="python")
+                    rc2.markdown("**Refactored**")
+                    rc2.code(refactored, language="python")
+                    with st.expander("📑 Show unified diff"):
+                        unified_diff = result.get("unified_diff", "")
+                        if unified_diff.strip():
+                            render_code(unified_diff, language="diff")
+                        else:
+                            st.info("No differences found.")
+                    st.download_button("⬇️ Download refactored", refactored, file_name="refactored.py", mime="text/plain")
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
     # ── Security ──────────────────────────────────────────
     with tab4:
@@ -1308,13 +1660,16 @@ def page_code_tools():
         code_in_s = st.text_area("Paste code to scan:", height=220, key="sec_in")
         if st.button("🔍 Scan for Vulnerabilities", key="btn_sec", type="primary"):
             if code_in_s.strip():
-                with st.spinner("Scanning…"):
-                    findings = utils.build_security_chain(llm()).invoke({"code": code_in_s})
+                try:
+                    with st.spinner("Scanning…"):
+                        findings = api_request(
+                            "POST",
+                            "/tools/security",
+                            payload={"code": code_in_s, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )["findings"]
 
-                # parse severity badges
-                lines = findings.strip().split("\n")
-                for line in lines:
-                    if line.strip():
+                    for line in findings:
                         color = "#ef4444" if "CRITICAL" in line.upper() else \
                                 "#f97316" if "HIGH"     in line.upper() else \
                                 "#facc15" if "MEDIUM"   in line.upper() else \
@@ -1324,6 +1679,8 @@ def page_code_tools():
                             f'margin:6px 0;background:{color}11;border-radius:0 8px 8px 0;">{line}</div>',
                             unsafe_allow_html=True,
                         )
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Paste code to scan.")
 
@@ -1333,27 +1690,37 @@ def page_code_tools():
         code_in_q = st.text_area("Paste code to score:", height=220, key="qual_in")
         if st.button("📊 Score My Code", key="btn_qual", type="primary"):
             if code_in_q.strip():
-                with st.spinner("Evaluating…"):
-                    raw = utils.build_quality_chain(llm()).invoke({"code": code_in_q})
                 try:
-                    clean = re.sub(r"```[a-z]*", "", raw).strip().strip("`").strip()
-                    scores = json.loads(clean)
-                    overall = scores.get("overall", 5)
-                    ov_color = "#10b981" if overall >= 7 else "#f59e0b" if overall >= 4 else "#ef4444"
+                    with st.spinner("Evaluating…"):
+                        result = api_request(
+                            "POST",
+                            "/tools/quality",
+                            payload={"code": code_in_q, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )
+                    if result.get("parsed"):
+                        scores = result["scores"]
+                        overall = scores.get("overall", 5)
+                        ov_color = "#10b981" if overall >= 7 else "#f59e0b" if overall >= 4 else "#ef4444"
 
-                    m1, m2, m3, m4, m5, m6 = st.columns(6)
-                    metric_box(m1, f"{scores.get('readability',0)}/10",  "Readability",    "#00d4ff")
-                    metric_box(m2, f"{scores.get('efficiency',0)}/10",   "Efficiency",     "#7c3aed")
-                    metric_box(m3, f"{scores.get('error_handling',0)}/10","Error Handling", "#ef4444")
-                    metric_box(m4, f"{scores.get('best_practices',0)}/10","Best Practices", "#10b981")
-                    metric_box(m5, f"{scores.get('documentation',0)}/10","Docs",            "#f59e0b")
-                    metric_box(m6, f"{overall}/10", "Overall", ov_color)
+                        m1, m2, m3, m4, m5, m6 = st.columns(6)
+                        metric_box(m1, f"{scores.get('readability',0)}/10",  "Readability",    "#00d4ff")
+                        metric_box(m2, f"{scores.get('efficiency',0)}/10",   "Efficiency",     "#7c3aed")
+                        metric_box(m3, f"{scores.get('error_handling',0)}/10","Error Handling", "#ef4444")
+                        metric_box(m4, f"{scores.get('best_practices',0)}/10","Best Practices", "#10b981")
+                        metric_box(m5, f"{scores.get('documentation',0)}/10","Docs",            "#f59e0b")
+                        metric_box(m6, f"{overall}/10", "Overall", ov_color)
 
-                    st.markdown(f"**Summary:** {scores.get('summary','')}")
-                    fig = utils.plot_quality_radar(scores)
-                    st.plotly_chart(fig, use_container_width=True)
+                        st.markdown(f"**Summary:** {scores.get('summary','')}")
+                        fig = build_chart_figure(result.get("chart"))
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        render_llm_response(result.get("raw", ""))
+                except RuntimeError as exc:
+                    st.error(str(exc))
                 except Exception:
-                    render_llm_response(raw)
+                    render_llm_response(result.get("raw", ""))
             else:
                 st.warning("Paste code to score.")
 
@@ -1363,9 +1730,17 @@ def page_code_tools():
         tb_in = st.text_area("Paste error traceback:", height=200, key="err_in")
         if st.button("🔍 Diagnose Error", key="btn_err", type="primary"):
             if tb_in.strip():
-                with st.spinner("Diagnosing…"):
-                    diag = utils.build_error_chain(llm()).invoke({"traceback": tb_in})
-                render_llm_response(diag)
+                try:
+                    with st.spinner("Diagnosing…"):
+                        diag = api_request(
+                            "POST",
+                            "/tools/debug",
+                            payload={"traceback": tb_in, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )["diagnosis"]
+                    render_llm_response(diag)
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Paste an error traceback first.")
 
@@ -1403,8 +1778,12 @@ def page_dev_sandbox():
                 del st.session_state["sandbox_output"]
 
         if run_clicked:
-            result = utils.run_python_sandbox(sandbox_code)
-            st.session_state["sandbox_output"] = result
+            try:
+                result = api_request("POST", "/sandbox/run", payload={"code": sandbox_code}, timeout=60)
+            except RuntimeError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["sandbox_output"] = result
 
         if "sandbox_output" in st.session_state:
             res = st.session_state["sandbox_output"]
@@ -1418,8 +1797,7 @@ def page_dev_sandbox():
             if res["success"]:
                 output_text = res["output"] or "(no output)"
                 # Render as styled terminal output
-                import html as _html
-                escaped = _html.escape(output_text)
+                escaped = _html_mod.escape(output_text)
                 st.markdown(
                     f'''<div class="terminal-output">'''
                     f'''<span class="t-prompt">▶ output</span>\n{escaped}'''
@@ -1429,7 +1807,7 @@ def page_dev_sandbox():
             else:
                 st.markdown(
                     f'''<div class="terminal-output">'''
-                    f'''<span class="t-error">✖ {_html.escape(res["error"])}</span>'''
+                    f'''<span class="t-error">✖ {_html_mod.escape(res["error"])}</span>'''
                     f'''</div>''',
                     unsafe_allow_html=True,
                 )
@@ -1441,26 +1819,22 @@ def page_dev_sandbox():
         broken = st.text_area("Broken code:", height=150, key="fixer_in")
         if st.button("🔧 Fix It", key="btn_fix", type="primary"):
             if broken.strip():
-                with st.spinner("Fixing…"):
-                    fix_prompt = (
-                        "You are an expert code debugger. Fix the broken code below. "
-                        "Structure your response EXACTLY like this:\n"
-                        "## What was wrong\n"
-                        "- bullet 1\n- bullet 2\n\n"
-                        "## Fixed Code\n"
-                        "```python\n<fixed code here>\n```\n\n"
-                        "## What changed\n"
-                        "Brief explanation of each fix.\n\n"
-                        f"Broken code:\n```\n{broken}\n```"
+                try:
+                    with st.spinner("Fixing…"):
+                        fixed = api_request(
+                            "POST",
+                            "/sandbox/fix",
+                            payload={"code": broken, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )["response"]
+                    st.markdown(
+                        '<div class="ai-response-card">',
+                        unsafe_allow_html=True,
                     )
-                    fixed = (llm()).invoke(fix_prompt).content
-                # Render in a styled AI response card
-                st.markdown(
-                    '<div class="ai-response-card">',
-                    unsafe_allow_html=True,
-                )
-                render_llm_response(fixed)
-                st.markdown('</div>', unsafe_allow_html=True)
+                    render_llm_response(fixed)
+                    st.markdown('</div>', unsafe_allow_html=True)
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
     # ── Complexity Analyzer ───────────────────────────────
     with tab2:
@@ -1470,23 +1844,30 @@ def page_dev_sandbox():
         code_in = st.text_area("Paste your function:", height=200, key="complex_in")
         if st.button("🧠 Analyze Complexity", key="btn_complex", type="primary"):
             if code_in.strip():
-                with st.spinner("Analyzing…"):
-                    result = utils.build_complexity_chain(llm()).invoke({"code": code_in})
+                try:
+                    with st.spinner("Analyzing…"):
+                        result = api_request(
+                            "POST",
+                            "/sandbox/complexity",
+                            payload={"code": code_in, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )
 
-                render_llm_response(result)
+                    render_llm_response(result["analysis"])
 
-                time_big_o = utils.parse_big_o(result.split("Time")[1] if "Time" in result else result)
-                space_big_o = utils.parse_big_o(result.split("Space")[1] if "Space" in result else "")
+                    time_big_o = result.get("time_complexity")
+                    space_big_o = result.get("space_complexity")
 
-                c1, c2 = st.columns(2)
-                metric_box(c1, time_big_o or "?", "Time Complexity", "#00d4ff")
-                metric_box(c2, space_big_o or "?", "Space Complexity", "#7c3aed")
-                st.markdown("")
+                    c1, c2 = st.columns(2)
+                    metric_box(c1, time_big_o or "?", "Time Complexity", "#00d4ff")
+                    metric_box(c2, space_big_o or "?", "Space Complexity", "#7c3aed")
+                    st.markdown("")
 
-                if time_big_o:
-                    fig = utils.plot_complexity_curve(time_big_o)
+                    fig = build_chart_figure(result.get("chart"))
                     if fig:
                         st.plotly_chart(fig, use_container_width=True)
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Paste a function first.")
 
@@ -1530,9 +1911,13 @@ def page_api_suite():
                     st.session_state["_api_body"]    = json.dumps(p.get("body", {}), indent=2)
                     st.toast(f"Loaded '{sel_prof}'")
                 if col_del.button("🗑️ Delete", key="del_profile_btn") and sel_prof != "— none —":
-                    utils.delete_api_profile(conn, sel_prof)
-                    del st.session_state.api_profiles[sel_prof]
-                    st.rerun()
+                    try:
+                        result = api_request("DELETE", f"/api-profiles/{quote(sel_prof, safe='')}")
+                    except RuntimeError as exc:
+                        st.error(str(exc))
+                    else:
+                        st.session_state.api_profiles = result["profiles"]
+                        st.rerun()
             else:
                 st.caption("No saved profiles yet.")
 
@@ -1555,15 +1940,24 @@ def page_api_suite():
             pname = st.text_input("Profile name", key="new_profile_name")
             if st.button("💾 Save Profile") and pname:
                 try:
-                    utils.save_api_profile(conn, pname, {
-                        "url": api_url, "method": method, "token": auth_token,
-                        "headers": json.loads(headers_raw or "{}"),
-                        "body": json.loads(body_raw or "{}") if method != "GET" else {},
-                    })
-                    st.session_state.api_profiles = utils.load_api_profiles(conn)
+                    result = api_request(
+                        "POST",
+                        "/api-profiles",
+                        payload={
+                            "name": pname,
+                            "url": api_url,
+                            "method": method,
+                            "token": auth_token,
+                            "headers": json.loads(headers_raw or "{}"),
+                            "body": json.loads(body_raw or "{}") if method != "GET" else {},
+                        },
+                    )
+                    st.session_state.api_profiles = result["profiles"]
                     st.success(f"Saved '{pname}'")
                 except json.JSONDecodeError as e:
                     st.error(f"Invalid JSON: {e}")
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
         # Send
         if st.button("🚀 Send Request", type="primary", key="send_api"):
@@ -1583,48 +1977,58 @@ def page_api_suite():
                     return
             try:
                 with st.spinner("Sending…"):
-                    with httpx.Client(timeout=float(timeout_s)) as client:
-                        resp = client.request(method=method, url=api_url, headers=headers, json=data)
-                status_color = "#10b981" if resp.status_code < 400 else "#ef4444"
+                    resp = api_request(
+                        "POST",
+                        "/http/request",
+                        payload={
+                            "url": api_url,
+                            "method": method,
+                            "headers": headers,
+                            "body": data or {},
+                            "bearer_token": auth_token,
+                            "timeout_s": float(timeout_s),
+                            "expected_status": int(exp_status) if exp_status.strip().isdigit() else None,
+                        },
+                        timeout=max(60.0, float(timeout_s) + 15.0),
+                    )
+                status_color = "#10b981" if resp["status_code"] < 400 else "#ef4444"
                 st.markdown(
                     f'<div style="display:flex;gap:10px;align-items:center;margin:8px 0;">'
-                    f'<span style="color:{status_color};font-weight:700;font-size:1.3rem;">{resp.status_code}</span>'
-                    f'<span style="color:#64748b;">{resp.elapsed.total_seconds()*1000:.0f} ms</span>'
+                    f'<span style="color:{status_color};font-weight:700;font-size:1.3rem;">{resp["status_code"]}</span>'
+                    f'<span style="color:#64748b;">{resp["response_time_ms"]:.0f} ms</span>'
                     f'</div>', unsafe_allow_html=True
                 )
                 rtab1, rtab2, rtab3 = st.tabs(["📦 Response Body", "📋 Headers", "🔧 cURL"])
                 with rtab1:
-                    try:
-                        st.json(resp.json())
-                    except Exception:
-                        render_code(resp.text, language="text")
+                    if resp["body_json"] is not None:
+                        st.json(resp["body_json"])
+                    else:
+                        render_code(resp["body_text"] or "", language="text")
                 with rtab2:
-                    st.json(dict(resp.headers))
+                    st.json(resp["headers"])
                 with rtab3:
-                    curl_parts = [f'curl -X {method} "{api_url}"']
-                    for k, v in headers.items():
-                        curl_parts.append(f'  -H "{k}: {v}"')
-                    if data:
-                        curl_parts.append(f"  -d '{json.dumps(data)}'")
-                    render_code(" \\\n".join(curl_parts), language="bash")
+                    render_code(resp["curl"], language="bash")
 
-                if exp_status:
-                    try:
-                        if int(exp_status) == resp.status_code:
-                            st.success("✅ Status matched expected.")
-                        else:
-                            st.error(f"❌ Expected {exp_status}, got {resp.status_code}")
-                    except ValueError:
-                        pass
+                if resp["expected_status"] is not None:
+                    if resp["expected_status_matched"]:
+                        st.success("✅ Status matched expected.")
+                    else:
+                        st.error(f'❌ Expected {resp["expected_status"]}, got {resp["status_code"]}')
 
                 st.session_state.api_history.insert(0, {
-                    "url": api_url, "method": method, "status": resp.status_code,
-                    "time_ms": round(resp.elapsed.total_seconds() * 1000),
-                    "response": resp.text[:4000],
+                    "url": api_url,
+                    "method": method,
+                    "status": resp["status_code"],
+                    "time_ms": round(resp["response_time_ms"]),
+                    "response": (
+                        json.dumps(resp["body_json"], indent=2)
+                        if resp["body_json"] is not None
+                        else (resp["body_text"] or "")
+                    )[:4000],
                 })
 
-            except Exception as exc:
-                st.error(f"Request failed: {exc}")
+            except RuntimeError as exc:
+                st.error(str(exc))
 
         # History
         if st.session_state.api_history:
@@ -1657,9 +2061,17 @@ def page_api_suite():
             mon_method = mc2.selectbox("Method", ["GET","POST"], key="mon_method")
             if mc3.button("🔁 Check Now", type="primary", key="btn_monitor"):
                 if mon_name and mon_url:
-                    with st.spinner("Pinging…"):
-                        result = utils.monitor_api(mon_name, mon_url, mon_method)
-                    st.session_state.monitor_history.insert(0, result)
+                    try:
+                        with st.spinner("Pinging…"):
+                            result = api_request(
+                                "POST",
+                                "/monitor",
+                                payload={"name": mon_name, "url": mon_url, "method": mon_method},
+                                timeout=45,
+                            )
+                        st.session_state.monitor_history.insert(0, result)
+                    except RuntimeError as exc:
+                        st.error(str(exc))
 
         for res in st.session_state.monitor_history[:10]:
             color = "#10b981" if res["ok"] else "#ef4444"
@@ -1704,18 +2116,31 @@ def page_generators():
     # ── Unit Tests ────────────────────────────────────────
     with tab1:
         sec_header("Unit Test Generator", "🧪", "#f59e0b")
-        lang = st.selectbox("Language / Framework", utils.LANGUAGES, key="ut_lang")
+        lang = st.selectbox("Language / Framework", LANGUAGES, key="ut_lang")
         func_code = st.text_area("Paste function / component:", height=200, key="ut_code")
         if st.button("🧪 Generate Tests", type="primary", key="btn_ut"):
             if func_code.strip():
-                with st.spinner("Writing tests…"):
-                    tests = utils.build_unit_test_chain(llm(), lang).invoke({"func": func_code})
-                render_code(tests, language=utils.LANG_HIGHLIGHT.get(lang, "python"))
-                st.download_button(
-                    "⬇️ Download test file",
-                    tests, file_name=f"test.{utils.LANG_EXT.get(lang,'txt')}",
-                    mime="text/plain",
-                )
+                try:
+                    with st.spinner("Writing tests…"):
+                        result = api_request(
+                            "POST",
+                            "/generate/unit-tests",
+                            payload={
+                                "language": lang,
+                                "code": func_code,
+                                "model_name": st.session_state.selected_model,
+                            },
+                            timeout=180,
+                        )
+                    tests = result["tests"]
+                    render_code(tests, language=result.get("highlight", "python"))
+                    st.download_button(
+                        "⬇️ Download test file",
+                        tests, file_name=f"test.{result.get('extension','txt')}",
+                        mime="text/plain",
+                    )
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Paste a function first.")
 
@@ -1733,30 +2158,34 @@ def page_generators():
 
         if st.button("🧠 Generate Regex", type="primary", key="btn_regex"):
             if rx_desc.strip():
-                with st.spinner("Generating…"):
-                    raw = llm().invoke(
-                        "Return ONLY a Python regular-expression pattern, no description, no fences:\n" + rx_desc
-                    ).content
-                    pattern = utils.clean_regex_pattern(raw)
-                if pattern:
-                    st.session_state["rx_pattern"] = pattern
-                    render_code(pattern, language="text")
-                    with st.spinner("Explaining…"):
-                        explain = utils.build_regex_explain_chain(llm()).invoke({"pattern": pattern})
-                    st.markdown(f"**Explanation:** {explain}")
+                try:
+                    with st.spinner("Generating…"):
+                        result = api_request(
+                            "POST",
+                            "/generate/regex",
+                            payload={
+                                "description": rx_desc,
+                                "sample_text": rx_sample,
+                                "model_name": st.session_state.selected_model,
+                            },
+                            timeout=180,
+                        )
+                    st.session_state["rx_result"] = result
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
-        if rx_sample.strip() and "rx_pattern" in st.session_state:
-            try:
-                pat = re.compile(st.session_state["rx_pattern"])
-                matches = pat.findall(rx_sample)
+        if "rx_result" in st.session_state:
+            rx_result = st.session_state["rx_result"]
+            render_code(rx_result["pattern"], language="text")
+            st.markdown(f"**Explanation:** {rx_result['explanation']}")
+            if rx_result.get("regex_error"):
+                st.error(f"Regex error: {rx_result['regex_error']}")
+            elif rx_result.get("sample_text"):
+                matches = rx_result.get("matches", [])
                 if matches:
-                    st.success(f"✅ {len(matches)} match(es): `{matches}`")
-                    highlighted = pat.sub(lambda m: f"**{m.group()}**", rx_sample)
-                    st.markdown("**Highlighted:** " + highlighted)
+                    st.success(f"✅ {rx_result['match_count']} match(es): `{matches}`")
                 else:
                     st.warning("No matches in sample text.")
-            except re.error as e:
-                st.error(f"Regex error: {e}")
 
     # ── SQL Builder ───────────────────────────────────────
     with tab3:
@@ -1766,10 +2195,22 @@ def page_generators():
         nl_query = st.text_area("Your query in plain English:", placeholder="Find all users who placed more than 3 orders in the last 30 days", height=100, key="sql_query")
         if st.button("🗄️ Generate SQL", type="primary", key="btn_sql"):
             if nl_query.strip():
-                with st.spinner("Generating SQL…"):
-                    sql_out = utils.build_sql_chain(llm()).invoke({"schema": schema, "query": nl_query})
-                render_code(sql_out, language="sql")
-                st.download_button("⬇️ Download .sql", sql_out, file_name="query.sql", mime="text/plain")
+                try:
+                    with st.spinner("Generating SQL…"):
+                        sql_out = api_request(
+                            "POST",
+                            "/generate/sql",
+                            payload={
+                                "schema": schema,
+                                "query": nl_query,
+                                "model_name": st.session_state.selected_model,
+                            },
+                            timeout=180,
+                        )["sql"]
+                    render_code(sql_out, language="sql")
+                    st.download_button("⬇️ Download .sql", sql_out, file_name="query.sql", mime="text/plain")
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
     # ── Dockerfile ────────────────────────────────────────
     with tab4:
@@ -1782,10 +2223,18 @@ def page_generators():
         )
         if st.button("🐳 Generate Dockerfile", type="primary", key="btn_docker"):
             if docker_desc.strip():
-                with st.spinner("Generating Dockerfile…"):
-                    dockerfile = utils.build_docker_chain(llm()).invoke({"description": docker_desc})
-                render_code(dockerfile, language="docker")
-                st.download_button("⬇️ Download Dockerfile", dockerfile, file_name="Dockerfile", mime="text/plain")
+                try:
+                    with st.spinner("Generating Dockerfile…"):
+                        dockerfile = api_request(
+                            "POST",
+                            "/generate/dockerfile",
+                            payload={"description": docker_desc, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )["dockerfile"]
+                    render_code(dockerfile, language="docker")
+                    st.download_button("⬇️ Download Dockerfile", dockerfile, file_name="Dockerfile", mime="text/plain")
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
     # ── Git Commit ────────────────────────────────────────
     with tab5:
@@ -1795,10 +2244,18 @@ def page_generators():
                                placeholder="feat: added user authentication\nChanged auth.py to use JWT tokens\nRemoved session-based auth")
         if st.button("📝 Generate Commit Message", type="primary", key="btn_commit"):
             if diff_in.strip():
-                with st.spinner("Writing commit message…"):
-                    commit_msg = utils.build_git_commit_chain(llm()).invoke({"diff": diff_in})
-                render_code(commit_msg, language="text")
-                st.download_button("⬇️ Copy as .txt", commit_msg, file_name="commit_msg.txt", mime="text/plain")
+                try:
+                    with st.spinner("Writing commit message…"):
+                        commit_msg = api_request(
+                            "POST",
+                            "/generate/commit-message",
+                            payload={"diff": diff_in, "model_name": st.session_state.selected_model},
+                            timeout=180,
+                        )["commit_message"]
+                    render_code(commit_msg, language="text")
+                    st.download_button("⬇️ Copy as .txt", commit_msg, file_name="commit_msg.txt", mime="text/plain")
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
     # ── Changelog ─────────────────────────────────────────
     with tab6:
@@ -1809,11 +2266,22 @@ def page_generators():
         version = st.text_input("Version (optional):", placeholder="1.4.2", key="cl_version")
         if st.button("📋 Generate Changelog", type="primary", key="btn_cl"):
             if changes_in.strip():
-                full_input = (f"Version: {version}\n\n" if version else "") + changes_in
-                with st.spinner("Generating changelog…"):
-                    cl_out = utils.build_changelog_chain(llm()).invoke({"changes": full_input})
-                render_llm_response(cl_out)
-                st.download_button("⬇️ Download CHANGELOG.md", cl_out, file_name="CHANGELOG.md", mime="text/plain")
+                try:
+                    with st.spinner("Generating changelog…"):
+                        cl_out = api_request(
+                            "POST",
+                            "/generate/changelog",
+                            payload={
+                                "changes": changes_in,
+                                "version": version,
+                                "model_name": st.session_state.selected_model,
+                            },
+                            timeout=180,
+                        )["changelog"]
+                    render_llm_response(cl_out)
+                    st.download_button("⬇️ Download CHANGELOG.md", cl_out, file_name="CHANGELOG.md", mime="text/plain")
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
 
 # ─────────────────────────────────────────────
@@ -1837,24 +2305,36 @@ def page_snippets():
     # Save new snippet
     with st.expander("➕ Save New Snippet", expanded=False):
         sn_name = st.text_input("Name:", key="sn_name", placeholder="Binary search function")
-        sn_lang = st.selectbox("Language:", utils.LANGUAGES, key="sn_lang")
+        sn_lang = st.selectbox("Language:", LANGUAGES, key="sn_lang")
         sn_tags = st.text_input("Tags (comma-separated):", key="sn_tags", placeholder="algorithms, search")
         sn_code = st.text_area("Code:", height=180, key="sn_code")
         if st.button("💾 Save Snippet", type="primary", key="btn_save_snip"):
             if sn_name.strip() and sn_code.strip():
-                utils.save_snippet(conn, sn_name.strip(), sn_lang, sn_code.strip(), sn_tags.strip())
-                st.success(f"Saved '{sn_name}'!")
-                st.rerun()
+                try:
+                    api_request(
+                        "POST",
+                        "/snippets",
+                        payload={
+                            "name": sn_name.strip(),
+                            "language": sn_lang,
+                            "code": sn_code.strip(),
+                            "tags": sn_tags.strip(),
+                        },
+                    )
+                    st.success(f"Saved '{sn_name}'!")
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.error(str(exc))
             else:
                 st.warning("Name and code are required.")
 
     # Search
     search = st.text_input("🔍 Search snippets:", key="snip_search", placeholder="Search by name or tag…")
-    snippets = utils.load_snippets(conn)
-
-    if search:
-        q = search.lower()
-        snippets = [s for s in snippets if q in s[1].lower() or q in (s[4] or "").lower()]
+    try:
+        snippets = api_request("GET", "/snippets", params={"search": search})["snippets"]
+    except RuntimeError as exc:
+        st.error(str(exc))
+        return
 
     if not snippets:
         st.info("No snippets yet. Save your first one above!")
@@ -1862,7 +2342,13 @@ def page_snippets():
 
     st.markdown(f"**{len(snippets)} snippet(s)** found")
 
-    for snip_id, name, lang, code, tags, created_at in snippets:
+    for snippet in snippets:
+        snip_id = snippet["id"]
+        name = snippet["name"]
+        lang = snippet["language"]
+        code = snippet["code"]
+        tags = snippet["tags"]
+        created_at = snippet["created_at"]
         with st.expander(f"📄 {name}  `{lang}`  — {created_at[:10]}"):
             if tags:
                 tag_html = " ".join(
@@ -1871,19 +2357,22 @@ def page_snippets():
                     for t in tags.split(",") if t.strip()
                 )
                 st.markdown(tag_html, unsafe_allow_html=True)
-            render_code(code, language=utils.LANG_HIGHLIGHT.get(lang, "python"))
+            render_code(code, language=LANG_HIGHLIGHT.get(lang, "python"))
 
             col_dl, col_del, _ = st.columns([1, 1, 4])
             col_dl.download_button(
                 "⬇️ Download",
                 code,
-                file_name=f"{name.replace(' ','_')}.{utils.LANG_EXT.get(lang,'txt')}",
+                file_name=f"{name.replace(' ','_')}.{LANG_EXT.get(lang,'txt')}",
                 mime="text/plain",
                 key=f"dl_{snip_id}",
             )
             if col_del.button("🗑️ Delete", key=f"del_{snip_id}"):
-                utils.delete_snippet(conn, snip_id)
-                st.rerun()
+                try:
+                    api_request("DELETE", f"/snippets/{snip_id}")
+                    st.rerun()
+                except RuntimeError as exc:
+                    st.error(str(exc))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1898,15 +2387,15 @@ _ROUTES = {
     "📚 Snippets":   page_snippets,
 }
 
-# Guard: check API key
-if not utils.API_KEY:
-    st.error(
-        "⚠️ **GROQ_API_KEY not found.** Create a `.env` file with:\n"
-        "```\nGROQ_API_KEY=your_key_here\n```\n"
-        "Get a free key at https://console.groq.com"
+# Guard: backend AI configuration
+if BACKEND_ONLINE and not BACKEND_HEALTH.get("groq_api_key_configured", False):
+    st.warning(
+        "⚠️ **GROQ_API_KEY is not configured in the FastAPI backend.** "
+        "AI-powered tools will fail until the backend `.env` contains that key."
     )
-    st.stop()
 
 # Render selected page
+render_backend_banner()
+schedule_backend_poll()
 page_fn = _ROUTES.get(st.session_state.page, page_chat)
 page_fn()

@@ -24,6 +24,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from dotenv import load_dotenv
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ENV_PATH = os.path.join(BASE_DIR, ".env")
+DB_PATH = os.path.join(BASE_DIR, "codenova.db")
+
+load_dotenv(ENV_PATH if os.path.exists(ENV_PATH) else None)
 load_dotenv()
 
 # ─────────────────────────────────────────────
@@ -83,7 +88,7 @@ UNIT_TEST_PROMPTS = {
 # ─────────────────────────────────────────────
 
 def init_db():
-    conn = sqlite3.connect("codenova.db", check_same_thread=False)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.executescript("""
         CREATE TABLE IF NOT EXISTS chat_history (

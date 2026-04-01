@@ -3,6 +3,8 @@ streamlit-lottie
 langchain
 langchain-core
 langchain-groq
+fastapi
+uvicorn
 httpx
 requests
 python-dotenv
