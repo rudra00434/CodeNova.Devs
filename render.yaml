@@ -1,0 +1,41 @@
+services:
+  - name: codenova-backend
+    type: pserv
+    runtime: python
+    plan: starter
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: codenova-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CODENOVA_DB_PATH
+        value: /var/data/codenova.db
+
+  - name: codenova-frontend
+    type: web
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run main.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: CODENOVA_API_HOSTPORT
+        fromService:
+          type: pserv
+          name: codenova-backend
+          property: hostport
+      - key: CODENOVA_API_TIMEOUT
+        value: "120"
+      - key: CODENOVA_API_RETRIES
+        value: "2"
+      - key: CODENOVA_API_RETRY_BACKOFF
+        value: "0.8"
+      - key: CODENOVA_HEALTH_POLL_MS
+        value: "30000"
+      - key: CODENOVA_HEALTH_AUTO_POLL
+        value: "true"

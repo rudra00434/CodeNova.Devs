@@ -1017,7 +1017,22 @@ FALLBACK_DEFAULT_MODEL = (
     else next(iter(FALLBACK_MODEL_MAP))
 )
 
-API_BASE_URL = os.getenv("CODENOVA_API_BASE_URL", "http://127.0.0.1:8000").rstrip("/")
+def _normalise_api_base_url() -> str:
+    explicit_url = os.getenv("CODENOVA_API_BASE_URL", "").strip()
+    internal_hostport = os.getenv("CODENOVA_API_HOSTPORT", "").strip()
+
+    if explicit_url:
+        return (
+            explicit_url.rstrip("/")
+            if explicit_url.startswith(("http://", "https://"))
+            else f"http://{explicit_url.rstrip('/')}"
+        )
+    if internal_hostport:
+        return f"http://{internal_hostport.rstrip('/')}"
+    return "http://127.0.0.1:8000"
+
+
+API_BASE_URL = _normalise_api_base_url()
 API_TIMEOUT = float(os.getenv("CODENOVA_API_TIMEOUT", "120"))
 API_RETRIES = max(0, int(os.getenv("CODENOVA_API_RETRIES", "2")))
 API_RETRY_BACKOFF = max(0.0, float(os.getenv("CODENOVA_API_RETRY_BACKOFF", "0.8")))

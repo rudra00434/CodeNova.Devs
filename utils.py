@@ -26,10 +26,19 @@ from dotenv import load_dotenv
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
-DB_PATH = os.path.join(BASE_DIR, "codenova.db")
 
 load_dotenv(ENV_PATH if os.path.exists(ENV_PATH) else None)
 load_dotenv()
+
+_db_path_raw = os.getenv("CODENOVA_DB_PATH", "").strip()
+if _db_path_raw:
+    DB_PATH = _db_path_raw if os.path.isabs(_db_path_raw) else os.path.join(BASE_DIR, _db_path_raw)
+else:
+    DB_PATH = os.path.join(BASE_DIR, "codenova.db")
+
+DB_DIR = os.path.dirname(DB_PATH)
+if DB_DIR:
+    os.makedirs(DB_DIR, exist_ok=True)
 
 # ─────────────────────────────────────────────
 # CONSTANTS
@@ -88,6 +97,8 @@ UNIT_TEST_PROMPTS = {
 # ─────────────────────────────────────────────
 
 def init_db():
+    if DB_DIR:
+        os.makedirs(DB_DIR, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
     c.executescript("""
