@@ -31,6 +31,10 @@ flowchart LR
 - Generators for unit tests, regex, SQL, Dockerfiles, commit messages, and changelogs
 - Snippet library stored in SQLite
 - Backend health/reconnect handling in the Streamlit UI
+  
+## UI / ScreenShots 
+<img width="1918" height="869" alt="image" src="https://github.com/user-attachments/assets/8ed8febf-527a-458c-8368-020970d29fc9" />
+<img width="1919" height="869" alt="image" src="https://github.com/user-attachments/assets/e1a6b36b-d8b4-439e-a12b-63a00b7a1691" />
 
 ## Tech Stack
 
